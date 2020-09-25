@@ -355,7 +355,7 @@ func writeDataInPod(app *v1.Pod, f *framework.Framework) error {
 func calMd5sum(app *v1.Pod, f *framework.Framework) (string, error) {
 	app.Namespace = f.UniqueName
 	opt := metav1.ListOptions{
-		LabelSelector: "app=cal-md5sum-value",
+		LabelSelector: "app=write-data-in-pod",
 	}
 	filePath := app.Spec.Containers[0].VolumeMounts[0].MountPath + "/test"
 	//calculate md5sum value of the file
@@ -367,8 +367,9 @@ func calMd5sum(app *v1.Pod, f *framework.Framework) (string, error) {
 	if stdErr != "" {
 		err = fmt.Errorf("failed to write data %v", stdErr)
 	}
+	checkSum := strings.Split(md5sum, "")[0]
 
-	return md5sum, err
+	return checkSum, err
 
 }
 

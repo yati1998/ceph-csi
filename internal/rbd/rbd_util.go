@@ -1425,13 +1425,13 @@ func (rv *rbdVolume) setThickProvisioned() error {
 // isThickProvisioned checks in the image metadata if the image has been marked
 // as thick-provisioned. This can be used while expanding the image, so that
 // the expansion can be allocated too.
-func (rv *rbdVolume) isThickProvisioned() (bool, error) {
-	value, err := rv.GetMetadata(thickProvisionMetaKey)
+func (ri *rbdImage) isThickProvisioned() (bool, error) {
+	value, err := ri.GetMetadata(thickProvisionMetaKey)
 	if err != nil {
 		if err == librbd.ErrNotFound {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to get metadata %q for %q: %w", thickProvisionMetaKey, rv.String(), err)
+		return false, fmt.Errorf("failed to get metadata %q for %q: %w", thickProvisionMetaKey, ri, err)
 	}
 
 	thick, err := strconv.ParseBool(value)
@@ -1536,6 +1536,50 @@ func (ri *rbdImage) isCompatibleEncryption(dst *rbdImage) error {
 
 	case !ri.isEncrypted() && dst.isEncrypted():
 		return fmt.Errorf("cannot create encrypted volume from unencrypted volume %q", ri)
+	}
+
+	return nil
+}
+
+func (ri *rbdImage) isCompatibleThickProvision(dst *rbdVolume) error {
+	thick, err := ri.isThickProvisioned()
+	if err != nil {
+		return err
+	}
+	switch {
+	case thick && !dst.ThickProvision:
+		return fmt.Errorf("cannot create thin volume from thick volume %q", ri)
+
+	case !thick && dst.ThickProvision:
+		return fmt.Errorf("cannot create thick volume from thin volume %q", ri)
+	}
+
+	return nil
+}
+
+// FIXME: merge isCompatibleThickProvision of rbdSnapshot and rbdImage to a single
+// function.
+func (rs *rbdSnapshot) isCompatibleThickProvision(dst *rbdVolume) error {
+	// During CreateSnapshot the rbd image will be created with the
+	// snapshot name. Replacing RbdImageName with RbdSnapName so that we
+	// can check if the image is thick provisioned
+	vol := generateVolFromSnap(rs)
+	err := vol.Connect(rs.conn.Creds)
+	if err != nil {
+		return err
+	}
+	defer vol.Destroy()
+
+	thick, err := vol.isThickProvisioned()
+	if err != nil {
+		return err
+	}
+	switch {
+	case thick && !dst.ThickProvision:
+		return fmt.Errorf("cannot create thin volume from thick volume %q", vol)
+
+	case !thick && dst.ThickProvision:
+		return fmt.Errorf("cannot create thick volume from thin volume %q", vol)
 	}
 
 	return nil

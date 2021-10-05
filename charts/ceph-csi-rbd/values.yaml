@@ -287,6 +287,22 @@ storageClass:
   # mounter: rbd-nbd
   mounter: ""
 
+  # (optional) ceph client log location, eg: rbd-nbd
+  # By default host-path /var/log/ceph of node is bind-mounted into
+  # csi-rbdplugin pod at /var/log/ceph mount path. This is to configure
+  # target bindmount path used inside container for ceph clients logging.
+  # See docs/rbd-nbd.md for available configuration options.
+  # cephLogDir: /var/log/ceph
+  cephLogDir: ""
+
+  # (optional) ceph client log strategy
+  # By default, log file belonging to a particular volume will be deleted
+  # on unmap, but you can choose to just compress instead of deleting it
+  # or even preserve the log file in text format as it is.
+  # Available options `remove` or `compress` or `preserve`
+  # cephLogStrategy: remove
+  cephLogStrategy: ""
+
   # (optional) Prefix to use for naming RBD images.
   # If omitted, defaults to "csi-vol-".
   # volumeNamePrefix: "foo-bar-"
@@ -403,7 +419,7 @@ pluginSocketFile: csi.sock
 # kubelet working directory,can be set using `--root-dir` when starting kubelet.
 kubeletDir: /var/lib/kubelet
 # Host path location for ceph client processes logging, ex: rbd-nbd
-cephLogDir: /var/log/ceph
+cephLogDirHostPath: /var/log/ceph
 # Name of the csi-driver
 driverName: rbd.csi.ceph.com
 # Name of the configmap used for state

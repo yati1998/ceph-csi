@@ -102,6 +102,9 @@ go-test: GO_COVER_DIR ?= $(shell . $(CURDIR)/build.env ; echo $${GO_COVER_DIR})
 go-test: check-env
 	TEST_COVERAGE="$(TEST_COVERAGE)" GO_COVER_DIR="$(GO_COVER_DIR)" GO_TAGS="$(GO_TAGS)" ./scripts/test-go.sh
 
+go-test-api: check-env
+	@pushd api && ../scripts/test-go.sh && popd
+
 mod-check: check-env
 	@echo 'running: go mod verify'
 	@go mod verify && [ "$(shell sha512sum go.mod)" = "`sha512sum go.mod`" ] || ( echo "ERROR: go.mod was modified by 'go mod verify'" && false )
@@ -159,6 +162,14 @@ cephcsi: check-env
 
 e2e.test: check-env
 	go test $(GO_TAGS) -mod=vendor -c ./e2e
+
+#
+# Update the generated deploy/ files when the template changed. This requires
+# running 'go mod vendor' so update the API files under the vendor/ directory.
+.PHONY: generate-deploy
+generate-deploy:
+	go mod vendor
+	$(MAKE) -C deploy
 
 #
 # e2e testing by compiling e2e.test in case it does not exist and running the

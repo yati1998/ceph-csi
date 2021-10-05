@@ -649,9 +649,9 @@ func sparsifyBackingRBDImage(f *framework.Framework, pvc *v1.PersistentVolumeCla
 	return err
 }
 
-func deletePool(name string, cephfs bool, f *framework.Framework) error {
+func deletePool(name string, cephFS bool, f *framework.Framework) error {
 	cmds := []string{}
-	if cephfs {
+	if cephFS {
 		// ceph fs fail
 		// ceph fs rm myfs --yes-i-really-mean-it
 		// ceph osd pool delete myfs-metadata myfs-metadata
@@ -973,4 +973,23 @@ func waitToRemoveImagesFromTrash(f *framework.Framework, poolName string, t int)
 	}
 
 	return err
+}
+
+func recreateCSIRBDPods(f *framework.Framework) error {
+	err := deletePodWithLabel("app in (ceph-csi-rbd, csi-rbdplugin, csi-rbdplugin-provisioner)",
+		cephCSINamespace, false)
+	if err != nil {
+		return fmt.Errorf("failed to delete pods with labels with error %w", err)
+	}
+	// wait for csi pods to come up
+	err = waitForDaemonSets(rbdDaemonsetName, cephCSINamespace, f.ClientSet, deployTimeout)
+	if err != nil {
+		return fmt.Errorf("timeout waiting for daemonset pods with error %w", err)
+	}
+	err = waitForDeploymentComplete(rbdDeploymentName, cephCSINamespace, f.ClientSet, deployTimeout)
+	if err != nil {
+		return fmt.Errorf("timeout waiting for deployment to be in running state with error %w", err)
+	}
+
+	return nil
 }

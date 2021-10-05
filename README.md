@@ -35,7 +35,7 @@ Independent CSI plugins are provided to support RBD and CephFS backed volumes,
 - For details about configuration and deployment of RBD plugin, please refer
   [rbd doc](https://github.com/ceph/ceph-csi/blob/devel/docs/deploy-rbd.md) and
   for CephFS plugin configuration and deployment please
-  refer [cephfs doc](https://github.com/ceph/ceph-csi/blob/devel/docs/deploy-cephfs.md).
+  refer [cephFS doc](https://github.com/ceph/ceph-csi/blob/devel/docs/deploy-cephfs.md).
 - For example usage of RBD and CephFS CSI plugins, see examples in `examples/`.
 - Stale resource cleanup, please refer [cleanup doc](docs/resource-cleanup.md).
 
@@ -158,8 +158,8 @@ More details are available [here](https://github.com/ceph/ceph-csi/issues/463)
 
 ## Dev standup
 
-A regular dev standup takes place every other [Monday,Tuesday,Thursday at
-12:00 PM UTC](https://redhat.bluejeans.com/702977652). Convert to your local
+A regular dev standup takes place every [Monday,Tuesday and Thursday at
+12:00 PM UTC](https://meet.google.com/nnn-txfp-cge). Convert to your local
 timezone by executing command `date -d "12:00 UTC"` on terminal
 
 Any changes to the meeting schedule will be added to the [agenda
@@ -169,7 +169,7 @@ Anyone who wants to discuss the direction of the project, design and
 implementation reviews, or general questions with the broader community is
 welcome and encouraged to join.
 
-- Meeting link: <https://redhat.bluejeans.com/702977652>
+- Meeting link: <https://meet.google.com/nnn-txfp-cge>
 - [Current agenda](https://docs.google.com/document/d/1K1aerdMpraIh56-skdoEoVF9RZrO4NUcbHtjN-f3u1s)
 
 ## Contact

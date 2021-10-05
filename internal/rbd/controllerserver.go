@@ -123,7 +123,10 @@ func (cs *ControllerServer) parseVolCreateRequest(
 	}
 
 	// if it's NOT SINGLE_NODE_WRITER and it's BLOCK we'll set the parameter to ignore the in-use checks
-	rbdVol, err := genVolFromVolumeOptions(ctx, req.GetParameters(), req.GetSecrets(), (isMultiNode && isBlock))
+	rbdVol, err := genVolFromVolumeOptions(
+		ctx,
+		req.GetParameters(), req.GetSecrets(),
+		(isMultiNode && isBlock), false)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -600,6 +603,10 @@ func (cs *ControllerServer) createVolumeFromSnapshot(
 		if err != nil {
 			return status.Errorf(codes.Internal, "failed to mark %q thick-provisioned: %s", rbdVol, err)
 		}
+		err = parentVol.copyEncryptionConfig(&rbdVol.rbdImage, true)
+		if err != nil {
+			return status.Errorf(codes.Internal, err.Error())
+		}
 	} else {
 		// create clone image and delete snapshot
 		err = rbdVol.cloneRbdImageFromSnapshot(ctx, rbdSnap, parentVol)
@@ -829,6 +836,16 @@ func (cs *ControllerServer) DeleteVolume(
 		return nil, status.Error(codes.Aborted, err.Error())
 	}
 	defer cs.OperationLocks.ReleaseDeleteLock(volumeID)
+
+	if isMigrationVolID(volumeID) {
+		log.DebugLog(ctx, "migration volume ID : %s", volumeID)
+		err = parseAndDeleteMigratedVolume(ctx, volumeID, cr)
+		if err != nil && !errors.Is(err, ErrImageNotFound) {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		return &csi.DeleteVolumeResponse{}, nil
+	}
 
 	rbdVol, err := genVolFromVolID(ctx, volumeID, cr, req.GetSecrets())
 	defer rbdVol.Destroy()
@@ -1092,7 +1109,7 @@ func cloneFromSnapshot(
 	defer vol.Destroy()
 
 	if rbdVol.isEncrypted() {
-		err = rbdVol.copyEncryptionConfig(&vol.rbdImage)
+		err = rbdVol.copyEncryptionConfig(&vol.rbdImage, false)
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
@@ -1211,7 +1228,7 @@ func (cs *ControllerServer) doSnapshotClone(
 	}()
 
 	if parentVol.isEncrypted() {
-		cryptErr := parentVol.copyEncryptionConfig(&cloneRbd.rbdImage)
+		cryptErr := parentVol.copyEncryptionConfig(&cloneRbd.rbdImage, false)
 		if cryptErr != nil {
 			log.WarningLog(ctx, "failed copy encryption "+
 				"config for %q: %v", cloneRbd, cryptErr)

@@ -17,8 +17,8 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"strings"
@@ -31,6 +31,9 @@ const (
 
 	// CsiConfigFile is the location of the CSI config file.
 	CsiConfigFile = "/etc/ceph-csi-config/config.json"
+
+	// ClusterIDKey is the name of the key containing clusterID.
+	ClusterIDKey = "clusterID"
 )
 
 // ClusterInfo strongly typed JSON spec for the below JSON structure.
@@ -105,8 +108,8 @@ func Mons(pathToConfig, clusterID string) (string, error) {
 	return strings.Join(cluster.Monitors, ","), nil
 }
 
-// RadosNamespace returns the namespace for the given clusterID.
-func RadosNamespace(pathToConfig, clusterID string) (string, error) {
+// GetRadosNamespace returns the namespace for the given clusterID.
+func GetRadosNamespace(pathToConfig, clusterID string) (string, error) {
 	cluster, err := readClusterInfo(pathToConfig, clusterID)
 	if err != nil {
 		return "", err
@@ -131,10 +134,14 @@ func CephFSSubvolumeGroup(pathToConfig, clusterID string) (string, error) {
 
 // GetMonsAndClusterID returns monitors and clusterID information read from
 // configfile.
-func GetMonsAndClusterID(options map[string]string) (string, string, error) {
-	clusterID, ok := options["clusterID"]
-	if !ok {
-		return "", "", errors.New("clusterID must be set")
+func GetMonsAndClusterID(ctx context.Context, clusterID string, checkClusterIDMapping bool) (string, string, error) {
+	if checkClusterIDMapping {
+		monitors, mappedClusterID, err := FetchMappedClusterIDAndMons(ctx, clusterID)
+		if err != nil {
+			return "", "", err
+		}
+
+		return monitors, mappedClusterID, nil
 	}
 
 	monitors, err := Mons(CsiConfigFile, clusterID)
@@ -143,4 +150,58 @@ func GetMonsAndClusterID(options map[string]string) (string, string, error) {
 	}
 
 	return monitors, clusterID, nil
+}
+
+// GetClusterID fetches clusterID from given options map.
+func GetClusterID(options map[string]string) (string, error) {
+	clusterID, ok := options[ClusterIDKey]
+	if !ok {
+		return "", ErrClusterIDNotSet
+	}
+
+	return clusterID, nil
+}
+
+// GetClusterIDFromMon will be called with a mon string to fetch
+// clusterID based on the passed in mon string. If passed in 'mon'
+// string has been found in the config the clusterID is returned,
+// else error.
+func GetClusterIDFromMon(mon string) (string, error) {
+	clusterID, err := readClusterInfoWithMon(CsiConfigFile, mon)
+
+	return clusterID, err
+}
+
+func readClusterInfoWithMon(pathToConfig, mon string) (string, error) {
+	var config []ClusterInfo
+
+	// #nosec
+	content, err := ioutil.ReadFile(pathToConfig)
+	if err != nil {
+		err = fmt.Errorf("error fetching configuration file %q: %w", pathToConfig, err)
+
+		return "", err
+	}
+
+	err = json.Unmarshal(content, &config)
+	if err != nil {
+		return "", fmt.Errorf("unmarshal failed (%w), raw buffer response: %s",
+			err, string(content))
+	}
+
+	for _, cluster := range config {
+		// as the same mons can fall into different clusterIDs with
+		// different radosnamespace configurations, we are bailing out
+		// if radosnamespace configuration is found for this cluster
+		if cluster.RadosNamespace != "" {
+			continue
+		}
+		for _, m := range cluster.Monitors {
+			if m == mon {
+				return cluster.ClusterID, nil
+			}
+		}
+	}
+
+	return "", ErrMissingConfigForMonitor
 }

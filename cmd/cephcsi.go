@@ -36,12 +36,12 @@ import (
 
 const (
 	rbdType        = "rbd"
-	cephfsType     = "cephfs"
+	cephFSType     = "cephfs"
 	livenessType   = "liveness"
 	controllerType = "controller"
 
 	rbdDefaultName      = "rbd.csi.ceph.com"
-	cephfsDefaultName   = "cephfs.csi.ceph.com"
+	cephFSDefaultName   = "cephfs.csi.ceph.com"
 	livenessDefaultName = "liveness.csi.ceph.com"
 
 	pollTime     = 60 // seconds
@@ -144,8 +144,8 @@ func getDriverName() string {
 	switch conf.Vtype {
 	case rbdType:
 		return rbdDefaultName
-	case cephfsType:
-		return cephfsDefaultName
+	case cephFSType:
+		return cephFSDefaultName
 	case livenessType:
 		return livenessDefaultName
 	default:
@@ -210,6 +210,10 @@ func main() {
 		}
 	}
 
+	if err = util.WriteCephConfig(); err != nil {
+		log.FatalLogMsg("failed to write ceph configuration file (%v)", err)
+	}
+
 	log.DefaultLog("Starting driver type: %v with name: %v", conf.Vtype, dname)
 	switch conf.Vtype {
 	case rbdType:
@@ -218,7 +222,7 @@ func main() {
 		driver := rbd.NewDriver()
 		driver.Run(&conf)
 
-	case cephfsType:
+	case cephFSType:
 		driver := cephfs.NewDriver()
 		driver.Run(&conf)
 

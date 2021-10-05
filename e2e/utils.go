@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // hash generation
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -100,6 +101,10 @@ func getMons(ns string, c kubernetes.Interface) ([]string, error) {
 	}
 
 	return services, nil
+}
+
+func getMonsHash(mons string) string {
+	return fmt.Sprintf("%x", md5.Sum([]byte(mons))) //nolint:gosec // hash generation
 }
 
 func getStorageClass(path string) (scv1.StorageClass, error) {
@@ -422,7 +427,7 @@ func checkDataPersist(pvcPath, appPath string, f *framework.Framework) error {
 	return err
 }
 
-func pvcDeleteWhenPoolNotFound(pvcPath string, cephfs bool, f *framework.Framework) error {
+func pvcDeleteWhenPoolNotFound(pvcPath string, cephFS bool, f *framework.Framework) error {
 	pvc, err := loadPVC(pvcPath)
 	if err != nil {
 		return err
@@ -433,13 +438,13 @@ func pvcDeleteWhenPoolNotFound(pvcPath string, cephfs bool, f *framework.Framewo
 	if err != nil {
 		return err
 	}
-	if cephfs {
+	if cephFS {
 		err = deleteBackingCephFSVolume(f, pvc)
 		if err != nil {
 			return err
 		}
-		// delete cephfs filesystem
-		err = deletePool("myfs", cephfs, f)
+		// delete cephFS filesystem
+		err = deletePool("myfs", cephFS, f)
 		if err != nil {
 			return err
 		}
@@ -449,7 +454,7 @@ func pvcDeleteWhenPoolNotFound(pvcPath string, cephfs bool, f *framework.Framewo
 			return err
 		}
 		// delete rbd pool
-		err = deletePool(defaultRBDPool, cephfs, f)
+		err = deletePool(defaultRBDPool, cephFS, f)
 		if err != nil {
 			return err
 		}
@@ -753,7 +758,8 @@ func validatePVCClone(
 func validatePVCSnapshot(
 	totalCount int,
 	pvcPath, appPath, snapshotPath, pvcClonePath, appClonePath string,
-	kms kmsConfig,
+	kms, restoreKMS kmsConfig,
+	restoreSCName string,
 	f *framework.Framework) {
 	var wg sync.WaitGroup
 	wgErrs := make([]error, totalCount)
@@ -854,6 +860,9 @@ func validatePVCSnapshot(
 	pvcClone.Namespace = f.UniqueName
 	appClone.Namespace = f.UniqueName
 	pvcClone.Spec.DataSource.Name = fmt.Sprintf("%s%d", f.UniqueName, 0)
+	if restoreSCName != "" {
+		pvcClone.Spec.StorageClassName = &restoreSCName
+	}
 
 	// create multiple PVC from same snapshot
 	wg.Add(totalCount)
@@ -867,6 +876,26 @@ func validatePVCSnapshot(
 				LabelSelector: fmt.Sprintf("%s=%s", appKey, label[appKey]),
 			}
 			wgErrs[n] = createPVCAndApp(name, f, &p, &a, deployTimeout)
+			if wgErrs[n] == nil && restoreKMS != noKMS {
+				if restoreKMS.canGetPassphrase() {
+					imageData, sErr := getImageInfoFromPVC(p.Namespace, name, f)
+					if sErr != nil {
+						wgErrs[n] = fmt.Errorf(
+							"failed to get image info for %s namespace=%s volumehandle=%s error=%w",
+							name,
+							p.Namespace,
+							imageData.csiVolumeHandle,
+							sErr)
+					} else {
+						// check new passphrase created
+						_, stdErr := restoreKMS.getPassphrase(f, imageData.csiVolumeHandle)
+						if stdErr != "" {
+							wgErrs[n] = fmt.Errorf("failed to read passphrase from vault: %s", stdErr)
+						}
+					}
+				}
+				wgErrs[n] = isEncryptedPVC(f, &p, &a)
+			}
 			if wgErrs[n] == nil {
 				filePath := a.Spec.Containers[0].VolumeMounts[0].MountPath + "/test"
 				var checkSumClone string
@@ -882,9 +911,6 @@ func validatePVCSnapshot(
 						checkSum,
 						checkSumClone)
 				}
-			}
-			if wgErrs[n] == nil && kms != noKMS {
-				wgErrs[n] = isEncryptedPVC(f, &p, &a)
 			}
 			wg.Done()
 		}(i, *pvcClone, *appClone)
@@ -1332,6 +1358,7 @@ func retryKubectlFile(namespace string, action kubectlAction, filename string, t
 // retryKubectlArgs takes a namespace and action telling kubectl what to do
 // with the passed arguments. This function retries until no error occurred, or
 // the timeout passed.
+// nolint:unparam // retryKubectlArgs will be used with kubectlDelete arg later on.
 func retryKubectlArgs(namespace string, action kubectlAction, t int, args ...string) error {
 	timeout := time.Duration(t) * time.Minute
 	args = append([]string{string(action)}, args...)

@@ -261,21 +261,21 @@ func (cj *Config) Connect(monitors, namespace string, cr *util.Credentials) (*Co
 
 /*
 CheckReservation checks if given request name contains a valid reservation
-- If there is a valid reservation, then the corresponding UUID for the volume/snapshot is returned
+- If there is a valid reservation, then the corresponding ImageData for the volume/snapshot is returned
 - If there is a reservation that is stale (or not fully cleaned up), it is garbage collected using
 the UndoReservation call, as appropriate
-- If a snapshot is being checked, then its source is matched to the parentName that is provided
+- If a snapshot is being checked, then its source is matched to the snapParentName that is provided
 
 NOTE: As the function manipulates omaps, it should be called with a lock against the request name
 held, to prevent parallel operations from modifying the state of the omaps for this request name.
 
 Return values:
-	- string: Contains the UUID that was reserved for the passed in reqName, empty if
-	there was no reservation found
+	- ImageData: which contains the UUID,Pool,PoolID and ImageAttributes that were reserved for the
+     passed in reqName, empty if there was no reservation found
 	- error: non-nil in case of any errors
 */
 func (conn *Connection) CheckReservation(ctx context.Context,
-	journalPool, reqName, namePrefix, parentName, kmsConfig string) (*ImageData, error) {
+	journalPool, reqName, namePrefix, snapParentName, kmsConfig string) (*ImageData, error) {
 	var (
 		snapSource       bool
 		objUUID          string
@@ -284,7 +284,7 @@ func (conn *Connection) CheckReservation(ctx context.Context,
 		cj                     = conn.config
 	)
 
-	if parentName != "" {
+	if snapParentName != "" {
 		if cj.cephSnapSourceKey == "" {
 			err := errors.New("invalid request, cephSnapSourceKey is nil")
 
@@ -378,12 +378,12 @@ func (conn *Connection) CheckReservation(ctx context.Context,
 
 	if snapSource {
 		// check if source UUID key points back to the parent volume passed in
-		if savedImageAttributes.SourceName != parentName {
+		if savedImageAttributes.SourceName != snapParentName {
 			// NOTE: This can happen if there is a snapname conflict, and we already have a snapshot
 			// with the same name pointing to a different UUID as the source
 			err = fmt.Errorf("%w: snapname points to different volume, request name (%s)"+
-				" source name (%s) saved source name (%s)", util.ErrSnapNameConflict,
-				reqName, parentName, savedImageAttributes.SourceName)
+				" source name (%s) : saved source name (%s)", util.ErrSnapNameConflict,
+				reqName, snapParentName, savedImageAttributes.SourceName)
 
 			return nil, err
 		}

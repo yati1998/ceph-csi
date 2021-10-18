@@ -3,7 +3,7 @@ module github.com/ceph/ceph-csi
 go 1.16
 
 require (
-	github.com/aws/aws-sdk-go v1.40.50
+	github.com/aws/aws-sdk-go v1.41.0
 	github.com/ceph/ceph-csi/api v0.0.0-00010101000000-000000000000
 	github.com/ceph/go-ceph v0.11.0
 	github.com/container-storage-interface/spec v1.5.0
@@ -17,7 +17,7 @@ require (
 	github.com/kubernetes-csi/csi-lib-utils v0.10.0
 	github.com/kubernetes-csi/external-snapshotter/client/v4 v4.2.0
 	github.com/libopenstorage/secrets v0.0.0-20210908194121-a1d19aa9713a
-	github.com/onsi/ginkgo v1.16.4
+	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.16.0
 	github.com/pborman/uuid v1.2.1
 	github.com/prometheus/client_golang v1.11.0
@@ -33,7 +33,7 @@ require (
 	k8s.io/kubernetes v1.22.2
 	k8s.io/mount-utils v0.22.2
 	k8s.io/utils v0.0.0-20210819203725-bdf08cb9a70a
-	sigs.k8s.io/controller-runtime v0.10.1
+	sigs.k8s.io/controller-runtime v0.10.2
 )
 
 replace (

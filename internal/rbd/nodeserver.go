@@ -33,6 +33,7 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/kubernetes/pkg/volume"
 	mount "k8s.io/mount-utils"
 	utilexec "k8s.io/utils/exec"
 )
@@ -147,24 +148,6 @@ func healerStageTransaction(ctx context.Context, cr *util.Credentials, volOps *r
 	log.DebugLog(ctx, "rbd volID: %s was successfully attached to device: %s", volOps.VolID, devicePath)
 
 	return nil
-}
-
-// getClusterIDFromMigrationVolume fills the clusterID for the passed in monitors.
-func getClusterIDFromMigrationVolume(monitors string) (string, error) {
-	var err error
-	var rclusterID string
-	for _, m := range strings.Split(monitors, ",") {
-		rclusterID, err = util.GetClusterIDFromMon(m)
-		if err != nil && !errors.Is(err, util.ErrMissingConfigForMonitor) {
-			return "", err
-		}
-
-		if rclusterID != "" {
-			return rclusterID, nil
-		}
-	}
-
-	return "", err
 }
 
 // populateRbdVol update the fields in rbdVolume struct based on the request it received.
@@ -290,16 +273,6 @@ func (ns *NodeServer) NodeStageVolume(
 	}
 	defer ns.VolumeLocks.Release(volID)
 
-	// Check this is a migration request because in that case, unlike other node stage requests
-	// it will be missing the clusterID, so fill it by fetching it from config file using mon.
-	if req.GetVolumeContext()[intreeMigrationKey] == intreeMigrationLabel && req.VolumeContext[util.ClusterIDKey] == "" {
-		cID, cErr := getClusterIDFromMigrationVolume(req.GetVolumeContext()["monitors"])
-		if cErr != nil {
-			return nil, status.Error(codes.Internal, cErr.Error())
-		}
-		req.VolumeContext[util.ClusterIDKey] = cID
-	}
-
 	stagingParentPath := req.GetStagingTargetPath()
 	stagingTargetPath := stagingParentPath + "/" + volID
 
@@ -385,8 +358,6 @@ func (ns *NodeServer) stageTransaction(
 
 	var err error
 	var readOnly bool
-	var feature bool
-	var depth uint
 
 	var cr *util.Credentials
 	cr, err = util.NewUserCredentials(req.GetSecrets())
@@ -402,29 +373,11 @@ func (ns *NodeServer) stageTransaction(
 		volOptions.readOnly = true
 	}
 
-	if kernelRelease == "" {
-		// fetch the current running kernel info
-		kernelRelease, err = util.GetKernelVersion()
-		if err != nil {
-			return transaction, err
-		}
+	err = flattenImageBeforeMapping(ctx, volOptions, cr)
+	if err != nil {
+		return transaction, err
 	}
-	if !util.CheckKernelSupport(kernelRelease, deepFlattenSupport) && !skipForceFlatten {
-		feature, err = volOptions.checkImageChainHasFeature(ctx, librbd.FeatureDeepFlatten)
-		if err != nil {
-			return transaction, err
-		}
-		depth, err = volOptions.getCloneDepth(ctx)
-		if err != nil {
-			return transaction, err
-		}
-		if feature || depth != 0 {
-			err = volOptions.flattenRbdImage(ctx, cr, true, rbdHardMaxCloneDepth, rbdSoftMaxCloneDepth)
-			if err != nil {
-				return transaction, err
-			}
-		}
-	}
+
 	// Mapping RBD image
 	var devicePath string
 	devicePath, err = attachRBDImage(ctx, volOptions, devicePath, cr)
@@ -472,12 +425,67 @@ func (ns *NodeServer) stageTransaction(
 	}
 	transaction.isMounted = true
 
+	// resize if its fileSystemType static volume.
+	if staticVol && !isBlock {
+		var ok bool
+		resizer := mount.NewResizeFs(utilexec.New())
+		ok, err = resizer.NeedResize(devicePath, stagingTargetPath)
+		if err != nil {
+			return transaction, status.Errorf(codes.Internal,
+				"Need resize check failed on devicePath %s and staingPath %s, error: %v",
+				devicePath,
+				stagingTargetPath,
+				err)
+		}
+		if ok {
+			ok, err = resizer.Resize(devicePath, stagingTargetPath)
+			if !ok {
+				return transaction, status.Errorf(codes.Internal,
+					"resize failed on path %s, error: %v", stagingTargetPath, err)
+			}
+		}
+	}
 	if !readOnly {
 		// #nosec - allow anyone to write inside the target path
 		err = os.Chmod(stagingTargetPath, 0o777)
 	}
 
 	return transaction, err
+}
+
+func flattenImageBeforeMapping(
+	ctx context.Context,
+	volOptions *rbdVolume,
+	cr *util.Credentials) error {
+	var err error
+	var feature bool
+	var depth uint
+
+	if kernelRelease == "" {
+		// fetch the current running kernel info
+		kernelRelease, err = util.GetKernelVersion()
+		if err != nil {
+			return err
+		}
+	}
+	if !util.CheckKernelSupport(kernelRelease, deepFlattenSupport) && !skipForceFlatten {
+		feature, err = volOptions.checkImageChainHasFeature(ctx, librbd.FeatureDeepFlatten)
+		if err != nil {
+			return err
+		}
+		depth, err = volOptions.getCloneDepth(ctx)
+		if err != nil {
+			return err
+		}
+		if feature || depth != 0 {
+			err = volOptions.flattenRbdImage(ctx, cr, true, rbdHardMaxCloneDepth, rbdSoftMaxCloneDepth)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (ns *NodeServer) undoStagingTransaction(
@@ -1140,18 +1148,10 @@ func (ns *NodeServer) NodeGetVolumeStats(
 //
 // TODO: https://github.com/container-storage-interface/spec/issues/371#issuecomment-756834471
 func blockNodeGetVolumeStats(ctx context.Context, targetPath string) (*csi.NodeGetVolumeStatsResponse, error) {
-	args := []string{"--noheadings", "--bytes", "--output=SIZE", targetPath}
-	lsblkSize, _, err := util.ExecCommand(ctx, "/bin/lsblk", args...)
+	mp := volume.NewMetricsBlock(targetPath)
+	m, err := mp.GetMetrics()
 	if err != nil {
-		err = fmt.Errorf("lsblk %v returned an error: %w", args, err)
-		log.ErrorLog(ctx, err.Error())
-
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	size, err := strconv.ParseInt(strings.TrimSpace(lsblkSize), 10, 64)
-	if err != nil {
-		err = fmt.Errorf("failed to convert %q to bytes: %w", lsblkSize, err)
+		err = fmt.Errorf("failed to get metrics: %w", err)
 		log.ErrorLog(ctx, err.Error())
 
 		return nil, status.Error(codes.Internal, err.Error())
@@ -1160,7 +1160,7 @@ func blockNodeGetVolumeStats(ctx context.Context, targetPath string) (*csi.NodeG
 	return &csi.NodeGetVolumeStatsResponse{
 		Usage: []*csi.VolumeUsage{
 			{
-				Total: size,
+				Total: m.Capacity.Value(),
 				Unit:  csi.VolumeUsage_BYTES,
 			},
 		},

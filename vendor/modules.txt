@@ -1,4 +1,4 @@
-# github.com/aws/aws-sdk-go v1.40.50
+# github.com/aws/aws-sdk-go v1.41.0
 ## explicit
 github.com/aws/aws-sdk-go/aws
 github.com/aws/aws-sdk-go/aws/awserr
@@ -51,6 +51,7 @@ github.com/blang/semver
 github.com/cenkalti/backoff/v3
 # github.com/ceph/ceph-csi/api v0.0.0-00010101000000-000000000000 => ./api
 ## explicit
+github.com/ceph/ceph-csi/api/deploy/kubernetes/rbd
 github.com/ceph/ceph-csi/api/deploy/ocp
 # github.com/ceph/go-ceph v0.11.0
 ## explicit
@@ -225,7 +226,7 @@ github.com/nxadm/tail/ratelimiter
 github.com/nxadm/tail/util
 github.com/nxadm/tail/watch
 github.com/nxadm/tail/winfile
-# github.com/onsi/ginkgo v1.16.4
+# github.com/onsi/ginkgo v1.16.5
 ## explicit
 github.com/onsi/ginkgo
 github.com/onsi/ginkgo/config
@@ -1020,7 +1021,7 @@ k8s.io/utils/trace
 # sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.0.22
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client/pkg/client
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client/proto/client
-# sigs.k8s.io/controller-runtime v0.10.1
+# sigs.k8s.io/controller-runtime v0.10.2
 ## explicit
 sigs.k8s.io/controller-runtime/pkg/cache
 sigs.k8s.io/controller-runtime/pkg/cache/internal

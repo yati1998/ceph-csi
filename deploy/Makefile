@@ -13,7 +13,16 @@
 # limitations under the License.
 
 .PHONY: all
-all: scc.yaml
+all: \
+	scc.yaml \
+	rbd/kubernetes/csidriver.yaml \
+	rbd/kubernetes/csi-config-map.yaml
 
 scc.yaml: ../api/deploy/ocp/scc.yaml ../api/deploy/ocp/scc.go
+	$(MAKE) -C ../tools generate-deploy
+
+rbd/kubernetes/csidriver.yaml: ../api/deploy/kubernetes/rbd/csidriver.yaml ../api/deploy/kubernetes/rbd/csidriver.go
+	$(MAKE) -C ../tools generate-deploy
+
+rbd/kubernetes/csi-config-map.yaml: ../api/deploy/kubernetes/rbd/csidriver.*
 	$(MAKE) -C ../tools generate-deploy

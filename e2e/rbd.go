@@ -60,7 +60,8 @@ var (
 	snapshotPath           = rbdExamplePath + "snapshot.yaml"
 	defaultCloneCount      = 10
 
-	nbdMapOptions = "debug-rbd=20"
+	nbdMapOptions             = "debug-rbd=20"
+	e2eDefaultCephLogStrategy = "preserve"
 )
 
 func deployRBDPlugin() {
@@ -366,31 +367,16 @@ var _ = Describe("RBD", func() {
 					}
 				})
 			}
+			// todo: may be remove the below deletion test later once the migration nodestage tests are adjusted
+			// also to have deletion validation through the same.
 			By("validate RBD migration+static Block PVC Deletion", func() {
-				// create monitors hash by fetching monitors from the cluster.
-				mons, err := getMons(rookNamespace, c)
+				err := generateClusterIDConfigMapForMigration(f, c)
 				if err != nil {
-					e2elog.Failf("failed to get monitors %v", err)
-				}
-				mon := strings.Join(mons, ",")
-				inClusterID := getMonsHash(mon)
-
-				clusterInfo := map[string]map[string]string{}
-				clusterInfo[inClusterID] = map[string]string{}
-
-				// create custom configmap
-				err = createCustomConfigMap(f.ClientSet, rbdDirPath, clusterInfo)
-				if err != nil {
-					e2elog.Failf("failed to create configmap with error %v", err)
+					e2elog.Failf("failed to generate clusterID configmap with error %v", err)
 				}
 				err = createRBDStorageClass(f.ClientSet, f, "migrationsc", nil, nil, deletePolicy)
 				if err != nil {
 					e2elog.Failf("failed to create storageclass with error %v", err)
-				}
-				// restart csi pods for the configmap to take effect.
-				err = recreateCSIRBDPods(f)
-				if err != nil {
-					e2elog.Failf("failed to recreate rbd csi pods with error %v", err)
 				}
 				err = validateRBDStaticMigrationPVDeletion(f, rawAppPath, "migrationsc", true)
 				if err != nil {
@@ -477,8 +463,9 @@ var _ = Describe("RBD", func() {
 					defaultSCName,
 					nil,
 					map[string]string{
-						"mounter":    "rbd-nbd",
-						"mapOptions": nbdMapOptions,
+						"mounter":         "rbd-nbd",
+						"mapOptions":      nbdMapOptions,
+						"cephLogStrategy": e2eDefaultCephLogStrategy,
 					},
 					deletePolicy)
 				if err != nil {
@@ -513,8 +500,9 @@ var _ = Describe("RBD", func() {
 						defaultSCName,
 						nil,
 						map[string]string{
-							"mounter":    "rbd-nbd",
-							"mapOptions": nbdMapOptions,
+							"mounter":         "rbd-nbd",
+							"mapOptions":      nbdMapOptions,
+							"cephLogStrategy": e2eDefaultCephLogStrategy,
 						},
 						deletePolicy)
 					if err != nil {
@@ -558,8 +546,9 @@ var _ = Describe("RBD", func() {
 					defaultSCName,
 					nil,
 					map[string]string{
-						"mounter":    "rbd-nbd",
-						"mapOptions": nbdMapOptions,
+						"mounter":         "rbd-nbd",
+						"mapOptions":      nbdMapOptions,
+						"cephLogStrategy": e2eDefaultCephLogStrategy,
 					},
 					deletePolicy)
 				if err != nil {
@@ -712,9 +701,10 @@ var _ = Describe("RBD", func() {
 					defaultSCName,
 					nil,
 					map[string]string{
-						"mounter":    "rbd-nbd",
-						"mapOptions": nbdMapOptions,
-						"encrypted":  "true",
+						"mounter":         "rbd-nbd",
+						"mapOptions":      nbdMapOptions,
+						"cephLogStrategy": e2eDefaultCephLogStrategy,
+						"encrypted":       "true",
 					},
 					deletePolicy)
 				if err != nil {
@@ -1069,9 +1059,10 @@ var _ = Describe("RBD", func() {
 						defaultSCName,
 						nil,
 						map[string]string{
-							"imageFeatures": "layering,journaling,exclusive-lock",
-							"mounter":       "rbd-nbd",
-							"mapOptions":    nbdMapOptions,
+							"imageFeatures":   "layering,journaling,exclusive-lock",
+							"mounter":         "rbd-nbd",
+							"mapOptions":      nbdMapOptions,
+							"cephLogStrategy": e2eDefaultCephLogStrategy,
 						},
 						deletePolicy)
 					if err != nil {
@@ -1611,21 +1602,45 @@ var _ = Describe("RBD", func() {
 			})
 
 			By("validate RBD migration+static FileSystem PVC", func() {
-				err := validateRBDStaticMigrationPV(f, appPath, false)
+				err := generateClusterIDConfigMapForMigration(f, c)
+				if err != nil {
+					e2elog.Failf("failed to generate clusterID configmap with error %v", err)
+				}
+				err = validateRBDStaticMigrationPV(f, appPath, false)
 				if err != nil {
 					e2elog.Failf("failed to validate rbd migrated static pv with error %v", err)
 				}
 				// validate created backend rbd images
 				validateRBDImageCount(f, 0, defaultRBDPool)
+				err = deleteConfigMap(rbdDirPath)
+				if err != nil {
+					e2elog.Failf("failed to delete configmap with error %v", err)
+				}
+				err = createConfigMap(rbdDirPath, f.ClientSet, f)
+				if err != nil {
+					e2elog.Failf("failed to create configmap with error %v", err)
+				}
 			})
 
 			By("validate RBD migration+static Block PVC", func() {
-				err := validateRBDStaticMigrationPV(f, rawAppPath, true)
+				err := generateClusterIDConfigMapForMigration(f, c)
+				if err != nil {
+					e2elog.Failf("failed to generate clusterID configmap with error %v", err)
+				}
+				err = validateRBDStaticMigrationPV(f, rawAppPath, true)
 				if err != nil {
 					e2elog.Failf("failed to validate rbd migrated static block pv with error %v", err)
 				}
 				// validate created backend rbd images
 				validateRBDImageCount(f, 0, defaultRBDPool)
+				err = deleteConfigMap(rbdDirPath)
+				if err != nil {
+					e2elog.Failf("failed to delete configmap with error %v", err)
+				}
+				err = createConfigMap(rbdDirPath, f.ClientSet, f)
+				if err != nil {
+					e2elog.Failf("failed to create configmap with error %v", err)
+				}
 			})
 
 			By("validate failure of RBD static PVC without imageFeatures parameter", func() {

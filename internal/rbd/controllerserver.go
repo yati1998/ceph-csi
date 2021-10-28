@@ -808,24 +808,33 @@ func (cs *ControllerServer) checkErrAndUndoReserve(
 func (cs *ControllerServer) DeleteVolume(
 	ctx context.Context,
 	req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
-	if err := cs.Driver.ValidateControllerServiceRequest(
+	var err error
+	if err = cs.Driver.ValidateControllerServiceRequest(
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME); err != nil {
 		log.ErrorLog(ctx, "invalid delete volume req: %v", protosanitizer.StripSecrets(req))
 
 		return nil, err
 	}
 
-	cr, err := util.NewUserCredentials(req.GetSecrets())
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	defer cr.DeleteCredentials()
-
 	// For now the image get unconditionally deleted, but here retention policy can be checked
 	volumeID := req.GetVolumeId()
 	if volumeID == "" {
 		return nil, status.Error(codes.InvalidArgument, "empty volume ID in request")
 	}
+
+	secrets := req.GetSecrets()
+	if util.IsMigrationSecret(secrets) {
+		secrets, err = util.ParseAndSetSecretMapFromMigSecret(secrets)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+	}
+
+	cr, err := util.NewUserCredentials(secrets)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	defer cr.DeleteCredentials()
 
 	if acquired := cs.VolumeLocks.TryAcquire(volumeID); !acquired {
 		log.ErrorLog(ctx, util.VolumeOperationAlreadyExistsFmt, volumeID)
@@ -842,17 +851,21 @@ func (cs *ControllerServer) DeleteVolume(
 	}
 	defer cs.OperationLocks.ReleaseDeleteLock(volumeID)
 
+	// if this is a migration request volID, delete the volume in backend
 	if isMigrationVolID(volumeID) {
-		log.DebugLog(ctx, "migration volume ID : %s", volumeID)
-		err = parseAndDeleteMigratedVolume(ctx, volumeID, cr)
-		if err != nil && !errors.Is(err, ErrImageNotFound) {
-			return nil, status.Error(codes.Internal, err.Error())
+		pmVolID, pErr := parseMigrationVolID(volumeID)
+		if pErr != nil {
+			return nil, status.Error(codes.InvalidArgument, pErr.Error())
+		}
+		pErr = deleteMigratedVolume(ctx, pmVolID, cr)
+		if pErr != nil && !errors.Is(pErr, ErrImageNotFound) {
+			return nil, status.Error(codes.Internal, pErr.Error())
 		}
 
 		return &csi.DeleteVolumeResponse{}, nil
 	}
 
-	rbdVol, err := genVolFromVolID(ctx, volumeID, cr, req.GetSecrets())
+	rbdVol, err := genVolFromVolID(ctx, volumeID, cr, secrets)
 	defer rbdVol.Destroy()
 	if err != nil {
 		return cs.checkErrAndUndoReserve(ctx, err, volumeID, rbdVol, cr)
@@ -1502,6 +1515,10 @@ func (cs *ControllerServer) ControllerExpandVolume(
 	}, nil
 }
 
+// logThickProvisioningDeprecation makes sure the deprecation warning about
+// thick-provisining is logged only once.
+var logThickProvisioningDeprecation = true
+
 // isThickProvisionRequest returns true in case the request contains the
 // `thickProvision` option set to `true`.
 func isThickProvisionRequest(parameters map[string]string) bool {
@@ -1515,6 +1532,12 @@ func isThickProvisionRequest(parameters map[string]string) bool {
 	thickBool, err := strconv.ParseBool(thick)
 	if err != nil {
 		return false
+	}
+
+	if logThickProvisioningDeprecation {
+		log.WarningLogMsg("thick-provisioning is deprecated and will " +
+			"be removed in a future release")
+		logThickProvisioningDeprecation = false
 	}
 
 	return thickBool

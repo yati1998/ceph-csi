@@ -3,34 +3,34 @@ module github.com/ceph/ceph-csi
 go 1.16
 
 require (
-	github.com/aws/aws-sdk-go v1.41.10
+	github.com/aws/aws-sdk-go v1.41.15
 	github.com/ceph/ceph-csi/api v0.0.0-00010101000000-000000000000
 	github.com/ceph/go-ceph v0.12.0
 	github.com/container-storage-interface/spec v1.5.0
 	github.com/csi-addons/replication-lib-utils v0.2.0
 	github.com/csi-addons/spec v0.1.1
+	github.com/go-sql-driver/mysql v1.5.0 // indirect
 	github.com/golang/protobuf v1.5.2
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
-	github.com/hashicorp/golang-lru v0.5.4 // indirect
-	github.com/hashicorp/vault/api v1.2.0
+	github.com/hashicorp/vault/api v1.3.0
 	github.com/kubernetes-csi/csi-lib-utils v0.10.0
 	github.com/kubernetes-csi/external-snapshotter/client/v4 v4.2.0
 	github.com/libopenstorage/secrets v0.0.0-20210908194121-a1d19aa9713a
 	github.com/onsi/ginkgo v1.16.5
-	github.com/onsi/gomega v1.16.0
+	github.com/onsi/gomega v1.17.0
 	github.com/pborman/uuid v1.2.1
 	github.com/prometheus/client_golang v1.11.0
 	github.com/stretchr/testify v1.7.0
-	golang.org/x/crypto v0.0.0-20210616213533-5ff15b29337e
+	golang.org/x/crypto v0.0.0-20210711020723-a769d52b0f97
 	golang.org/x/sys v0.0.0-20210817190340-bfb29a6856f2
-	google.golang.org/grpc v1.41.0
+	google.golang.org/grpc v1.42.0
 	k8s.io/api v0.22.2
 	k8s.io/apimachinery v0.22.2
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/cloud-provider v0.22.2
 	k8s.io/klog/v2 v2.10.0
-	k8s.io/kubernetes v1.22.2
+	k8s.io/kubernetes v1.22.3
 	k8s.io/mount-utils v0.22.2
 	k8s.io/utils v0.0.0-20210819203725-bdf08cb9a70a
 	sigs.k8s.io/controller-runtime v0.10.2
@@ -70,6 +70,8 @@ replace (
 	k8s.io/mount-utils => k8s.io/mount-utils v0.22.2
 	k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.22.2
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.22.2
+	// layeh.com seems to be misbehaving
+	layeh.com/radius => github.com/layeh/radius v0.0.0-20190322222518-890bc1058917
 )
 
 exclude (

@@ -1,8 +1,8 @@
-# github.com/armon/go-metrics v0.3.3
+# github.com/armon/go-metrics v0.3.9
 github.com/armon/go-metrics
 # github.com/armon/go-radix v1.0.0
 github.com/armon/go-radix
-# github.com/aws/aws-sdk-go v1.41.10
+# github.com/aws/aws-sdk-go v1.41.15
 ## explicit
 github.com/aws/aws-sdk-go/aws
 github.com/aws/aws-sdk-go/aws/awserr
@@ -100,6 +100,8 @@ github.com/fsnotify/fsnotify
 github.com/ghodss/yaml
 # github.com/go-logr/logr v0.4.0
 github.com/go-logr/logr
+# github.com/go-sql-driver/mysql v1.5.0
+## explicit
 # github.com/gogo/protobuf v1.3.2
 github.com/gogo/protobuf/proto
 github.com/gogo/protobuf/sortkeys
@@ -114,9 +116,10 @@ github.com/golang/protobuf/protoc-gen-go/descriptor
 github.com/golang/protobuf/ptypes
 github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
+github.com/golang/protobuf/ptypes/empty
 github.com/golang/protobuf/ptypes/timestamp
 github.com/golang/protobuf/ptypes/wrappers
-# github.com/golang/snappy v0.0.1
+# github.com/golang/snappy v0.0.4
 github.com/golang/snappy
 # github.com/google/go-cmp v0.5.5
 github.com/google/go-cmp/cmp
@@ -149,17 +152,19 @@ github.com/hashicorp/errwrap
 github.com/hashicorp/go-cleanhttp
 # github.com/hashicorp/go-hclog v0.16.2
 github.com/hashicorp/go-hclog
-# github.com/hashicorp/go-immutable-radix v1.1.0
+# github.com/hashicorp/go-immutable-radix v1.3.1
 github.com/hashicorp/go-immutable-radix
 # github.com/hashicorp/go-multierror v1.1.1
 github.com/hashicorp/go-multierror
-# github.com/hashicorp/go-plugin v1.0.1
+# github.com/hashicorp/go-plugin v1.4.3
 github.com/hashicorp/go-plugin
 github.com/hashicorp/go-plugin/internal/plugin
 # github.com/hashicorp/go-retryablehttp v0.6.6
 github.com/hashicorp/go-retryablehttp
 # github.com/hashicorp/go-rootcerts v1.0.2
 github.com/hashicorp/go-rootcerts
+# github.com/hashicorp/go-secure-stdlib/mlock v0.1.1
+github.com/hashicorp/go-secure-stdlib/mlock
 # github.com/hashicorp/go-secure-stdlib/parseutil v0.1.1
 github.com/hashicorp/go-secure-stdlib/parseutil
 # github.com/hashicorp/go-secure-stdlib/strutil v0.1.1
@@ -171,7 +176,6 @@ github.com/hashicorp/go-uuid
 # github.com/hashicorp/go-version v1.2.0
 github.com/hashicorp/go-version
 # github.com/hashicorp/golang-lru v0.5.4
-## explicit
 github.com/hashicorp/golang-lru
 github.com/hashicorp/golang-lru/simplelru
 # github.com/hashicorp/hcl v1.0.0
@@ -187,10 +191,10 @@ github.com/hashicorp/hcl/json/token
 # github.com/hashicorp/vault v1.4.2
 github.com/hashicorp/vault/command/agent/auth
 github.com/hashicorp/vault/command/agent/auth/kubernetes
-# github.com/hashicorp/vault/api v1.2.0
+# github.com/hashicorp/vault/api v1.3.0
 ## explicit
 github.com/hashicorp/vault/api
-# github.com/hashicorp/vault/sdk v0.2.1
+# github.com/hashicorp/vault/sdk v0.3.0
 github.com/hashicorp/vault/sdk/helper/certutil
 github.com/hashicorp/vault/sdk/helper/compressutil
 github.com/hashicorp/vault/sdk/helper/consts
@@ -201,7 +205,6 @@ github.com/hashicorp/vault/sdk/helper/jsonutil
 github.com/hashicorp/vault/sdk/helper/license
 github.com/hashicorp/vault/sdk/helper/locksutil
 github.com/hashicorp/vault/sdk/helper/logging
-github.com/hashicorp/vault/sdk/helper/mlock
 github.com/hashicorp/vault/sdk/helper/pathmanager
 github.com/hashicorp/vault/sdk/helper/pluginutil
 github.com/hashicorp/vault/sdk/helper/strutil
@@ -290,7 +293,7 @@ github.com/onsi/ginkgo/reporters/stenographer
 github.com/onsi/ginkgo/reporters/stenographer/support/go-colorable
 github.com/onsi/ginkgo/reporters/stenographer/support/go-isatty
 github.com/onsi/ginkgo/types
-# github.com/onsi/gomega v1.16.0
+# github.com/onsi/gomega v1.17.0
 ## explicit
 github.com/onsi/gomega
 github.com/onsi/gomega/format
@@ -401,9 +404,9 @@ go.opentelemetry.io/proto/otlp/common/v1
 go.opentelemetry.io/proto/otlp/metrics/v1
 go.opentelemetry.io/proto/otlp/resource/v1
 go.opentelemetry.io/proto/otlp/trace/v1
-# go.uber.org/atomic v1.7.0
+# go.uber.org/atomic v1.9.0
 go.uber.org/atomic
-# golang.org/x/crypto v0.0.0-20210616213533-5ff15b29337e
+# golang.org/x/crypto v0.0.0-20210711020723-a769d52b0f97
 ## explicit
 golang.org/x/crypto/blake2b
 golang.org/x/crypto/blowfish
@@ -481,7 +484,7 @@ google.golang.org/appengine/urlfetch
 google.golang.org/genproto/googleapis/api/httpbody
 google.golang.org/genproto/googleapis/rpc/status
 google.golang.org/genproto/protobuf/field_mask
-# google.golang.org/grpc v1.41.0
+# google.golang.org/grpc v1.42.0
 ## explicit
 google.golang.org/grpc
 google.golang.org/grpc/attributes
@@ -526,6 +529,8 @@ google.golang.org/grpc/internal/xds/env
 google.golang.org/grpc/keepalive
 google.golang.org/grpc/metadata
 google.golang.org/grpc/peer
+google.golang.org/grpc/reflection
+google.golang.org/grpc/reflection/grpc_reflection_v1alpha
 google.golang.org/grpc/resolver
 google.golang.org/grpc/serviceconfig
 google.golang.org/grpc/stats
@@ -563,6 +568,7 @@ google.golang.org/protobuf/runtime/protoimpl
 google.golang.org/protobuf/types/descriptorpb
 google.golang.org/protobuf/types/known/anypb
 google.golang.org/protobuf/types/known/durationpb
+google.golang.org/protobuf/types/known/emptypb
 google.golang.org/protobuf/types/known/fieldmaskpb
 google.golang.org/protobuf/types/known/timestamppb
 google.golang.org/protobuf/types/known/wrapperspb
@@ -986,7 +992,7 @@ k8s.io/kubectl/pkg/scale
 k8s.io/kubectl/pkg/util/podutils
 # k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.22.2
 k8s.io/kubelet/pkg/apis/stats/v1alpha1
-# k8s.io/kubernetes v1.22.2
+# k8s.io/kubernetes v1.22.3
 ## explicit
 k8s.io/kubernetes/pkg/api/legacyscheme
 k8s.io/kubernetes/pkg/api/service
@@ -1143,3 +1149,4 @@ sigs.k8s.io/yaml
 # k8s.io/mount-utils => k8s.io/mount-utils v0.22.2
 # k8s.io/pod-security-admission => k8s.io/pod-security-admission v0.22.2
 # k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.22.2
+# layeh.com/radius => github.com/layeh/radius v0.0.0-20190322222518-890bc1058917

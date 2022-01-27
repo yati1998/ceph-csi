@@ -2,7 +2,8 @@
 
 ROOK_VERSION=${ROOK_VERSION:-"v1.6.2"}
 ROOK_DEPLOY_TIMEOUT=${ROOK_DEPLOY_TIMEOUT:-300}
-ROOK_URL="https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/cluster/examples/kubernetes/ceph"
+ROOK_URL="https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/"
+ROOK_DEPLOYMENT_PATH="cluster/examples/kubernetes/ceph"
 ROOK_BLOCK_POOL_NAME=${ROOK_BLOCK_POOL_NAME:-"newrbdpool"}
 ROOK_BLOCK_EC_POOL_NAME=${ROOK_BLOCK_EC_POOL_NAME:-"ec-pool"}
 
@@ -20,7 +21,7 @@ function log_errors() {
 	kubectl get nodes
 	kubectl -n rook-ceph get events
 	kubectl -n rook-ceph describe pods
-	kubectl -n rook-ceph logs -l app=rook-ceph-operator
+	kubectl -n rook-ceph logs -l app=rook-ceph-operator --tail=-1
 	kubectl -n rook-ceph get CephClusters -oyaml
 	kubectl -n rook-ceph get CephFilesystems -oyaml
 	kubectl -n rook-ceph get CephBlockPools -oyaml
@@ -33,57 +34,67 @@ rook_version() {
 	echo "${ROOK_VERSION#v}" | cut -d'.' -f"${1}"
 }
 
+function update_rook_url() {
+	ROOK_MAJOR=$(rook_version 1)
+	ROOK_MINOR=$(rook_version 2)
+
+	# If rook version is => 1.8 update deployment path.
+	if [ "${ROOK_MAJOR}" -eq 1 ] && [ "${ROOK_MINOR}" -ge 8 ]; then
+		ROOK_DEPLOYMENT_PATH="deploy/examples"
+	fi
+	ROOK_URL+=${ROOK_DEPLOYMENT_PATH}
+}
+
 function deploy_rook() {
-        kubectl_retry create -f "${ROOK_URL}/common.yaml"
+	kubectl_retry create -f "${ROOK_URL}/common.yaml"
 
-        # If rook version is > 1.5 , we will apply CRDs.
-        ROOK_MAJOR=$(rook_version 1)
-        ROOK_MINOR=$(rook_version 2)
-        if  [ "${ROOK_MAJOR}" -eq 1 ] && [ "${ROOK_MINOR}" -ge 5 ];
-	  then
-	      kubectl_retry create -f "${ROOK_URL}/crds.yaml"
-	  fi
-        TEMP_DIR="$(mktemp -d)"
-        curl -o "${TEMP_DIR}/operator.yaml" "${ROOK_URL}/operator.yaml"
-        # disable rook deployed csi drivers
-        sed -i 's|ROOK_CSI_ENABLE_CEPHFS: "true"|ROOK_CSI_ENABLE_CEPHFS: "false"|g' "${TEMP_DIR}/operator.yaml"
-        sed -i 's|ROOK_CSI_ENABLE_RBD: "true"|ROOK_CSI_ENABLE_RBD: "false"|g' "${TEMP_DIR}/operator.yaml"
+	ROOK_MAJOR=$(rook_version 1)
+	ROOK_MINOR=$(rook_version 2)
 
-        kubectl_retry create -f "${TEMP_DIR}/operator.yaml"
-        # Override the ceph version which rook installs by default.
-        if  [ -z "${ROOK_CEPH_CLUSTER_IMAGE}" ]
-        then
-            kubectl_retry create -f "${ROOK_URL}/cluster-test.yaml"
-        else
-            ROOK_CEPH_CLUSTER_VERSION_IMAGE_PATH="image: ${ROOK_CEPH_CLUSTER_IMAGE}"
+	# If rook version is > 1.5 , we will apply CRDs.
+	if [ "${ROOK_MAJOR}" -eq 1 ] && [ "${ROOK_MINOR}" -ge 5 ]; then
+		kubectl_retry create -f "${ROOK_URL}/crds.yaml"
+	fi
+	TEMP_DIR="$(mktemp -d)"
+	curl -o "${TEMP_DIR}/operator.yaml" "${ROOK_URL}/operator.yaml"
+	# disable rook deployed csi drivers
+	sed -i 's|ROOK_CSI_ENABLE_CEPHFS: "true"|ROOK_CSI_ENABLE_CEPHFS: "false"|g' "${TEMP_DIR}/operator.yaml"
+	sed -i 's|ROOK_CSI_ENABLE_RBD: "true"|ROOK_CSI_ENABLE_RBD: "false"|g' "${TEMP_DIR}/operator.yaml"
 
-            curl -o "${TEMP_DIR}"/cluster-test.yaml "${ROOK_URL}/cluster-test.yaml"
-            sed -i "s|image.*|${ROOK_CEPH_CLUSTER_VERSION_IMAGE_PATH}|g" "${TEMP_DIR}"/cluster-test.yaml
-            sed -i "s/config: |/config: |\n    \[mon\]\n    mon_warn_on_insecure_global_id_reclaim_allowed = false/g" "${TEMP_DIR}"/cluster-test.yaml
-            sed -i "s/healthCheck:/healthCheck:\n    livenessProbe:\n      mon:\n        disabled: true\n      mgr:\n        disabled: true\n      mds:\n        disabled: true/g" "${TEMP_DIR}"/cluster-test.yaml
-			cat  "${TEMP_DIR}"/cluster-test.yaml
-            kubectl_retry create -f "${TEMP_DIR}/cluster-test.yaml"
-        fi
-        rm -rf "${TEMP_DIR}"
+	kubectl_retry create -f "${TEMP_DIR}/operator.yaml"
+	# Override the ceph version which rook installs by default.
+	if [ -z "${ROOK_CEPH_CLUSTER_IMAGE}" ]; then
+		kubectl_retry create -f "${ROOK_URL}/cluster-test.yaml"
+	else
+		ROOK_CEPH_CLUSTER_VERSION_IMAGE_PATH="image: ${ROOK_CEPH_CLUSTER_IMAGE}"
 
-        kubectl_retry create -f "${ROOK_URL}/toolbox.yaml"
-        kubectl_retry create -f "${ROOK_URL}/filesystem-test.yaml"
-        kubectl_retry create -f "${ROOK_URL}/pool-test.yaml"
+		curl -o "${TEMP_DIR}"/cluster-test.yaml "${ROOK_URL}/cluster-test.yaml"
+		sed -i "s|image.*|${ROOK_CEPH_CLUSTER_VERSION_IMAGE_PATH}|g" "${TEMP_DIR}"/cluster-test.yaml
+		sed -i "s/config: |/config: |\n    \[mon\]\n    mon_warn_on_insecure_global_id_reclaim_allowed = false/g" "${TEMP_DIR}"/cluster-test.yaml
+		sed -i "s/healthCheck:/healthCheck:\n    livenessProbe:\n      mon:\n        disabled: true\n      mgr:\n        disabled: true\n      mds:\n        disabled: true\n    startupProbe:\n      mon:\n        disabled: true\n      mgr:\n        disabled: true\n      mds:\n        disabled: true/g" "${TEMP_DIR}"/cluster-test.yaml
+		cat "${TEMP_DIR}"/cluster-test.yaml
+		kubectl_retry create -f "${TEMP_DIR}/cluster-test.yaml"
+	fi
+	rm -rf "${TEMP_DIR}"
 
-        # Check if CephCluster is empty
-        if ! kubectl_retry -n rook-ceph get cephclusters -oyaml | grep 'items: \[\]' &>/dev/null; then
-            check_ceph_cluster_health
-        fi
+	kubectl_retry create -f "${ROOK_URL}/toolbox.yaml"
+	kubectl_retry create -f "${ROOK_URL}/filesystem-test.yaml"
+	kubectl_retry create -f "${ROOK_URL}/pool-test.yaml"
 
-        # Check if CephFileSystem is empty
-        if ! kubectl_retry -n rook-ceph get cephfilesystems -oyaml | grep 'items: \[\]' &>/dev/null; then
-            check_mds_stat
-        fi
+	# Check if CephCluster is empty
+	if ! kubectl_retry -n rook-ceph get cephclusters -oyaml | grep 'items: \[\]' &>/dev/null; then
+		check_ceph_cluster_health
+	fi
 
-        # Check if CephBlockPool is empty
-        if ! kubectl_retry -n rook-ceph get cephblockpools -oyaml | grep 'items: \[\]' &>/dev/null; then
-            check_rbd_stat ""
-        fi
+	# Check if CephFileSystem is empty
+	if ! kubectl_retry -n rook-ceph get cephfilesystems -oyaml | grep 'items: \[\]' &>/dev/null; then
+		check_mds_stat
+	fi
+
+	# Check if CephBlockPool is empty
+	if ! kubectl_retry -n rook-ceph get cephblockpools -oyaml | grep 'items: \[\]' &>/dev/null; then
+		check_rbd_stat ""
+	fi
 }
 
 function teardown_rook() {
@@ -93,10 +104,9 @@ function teardown_rook() {
 	kubectl delete -f "${ROOK_URL}/cluster-test.yaml"
 	kubectl delete -f "${ROOK_URL}/operator.yaml"
 	ROOK_MAJOR=$(rook_version 1)
-      ROOK_MINOR=$(rook_version 2)
-      if  [ "${ROOK_MAJOR}" -eq 1 ] && [ "${ROOK_MINOR}" -ge 5 ];
-	then
-	      kubectl delete -f "${ROOK_URL}/crds.yaml"
+	ROOK_MINOR=$(rook_version 2)
+	if [ "${ROOK_MAJOR}" -eq 1 ] && [ "${ROOK_MINOR}" -ge 5 ]; then
+		kubectl delete -f "${ROOK_URL}/crds.yaml"
 	fi
 	kubectl delete -f "${ROOK_URL}/common.yaml"
 }
@@ -120,6 +130,7 @@ function delete_block_pool() {
 function create_block_ec_pool() {
 	curl -o block-pool-ec.yaml "${ROOK_URL}/pool-ec.yaml"
 	sed -i "s/ec-pool/${ROOK_BLOCK_EC_POOL_NAME}/g" block-pool-ec.yaml
+	sed -i "s/failureDomain: host/failureDomain: osd/g" block-pool-ec.yaml
 	kubectl_retry create -f "./block-pool-ec.yaml"
 	rm -f "./block-pool-ec.yaml"
 
@@ -188,12 +199,21 @@ function check_rbd_stat() {
 		else
 			RBD_POOL_NAME=$1
 		fi
+		# Rook creates a detault pool with name device_health_metrics for
+		#  device-health-metrics CephBlockPool CR
+		if [[ "${RBD_POOL_NAME}" == "device-health-metrics" ]]; then
+			RBD_POOL_NAME="device_health_metrics"
+		fi
+
 		echo "Checking RBD ($RBD_POOL_NAME) stats... ${retry}s" && sleep 5
 
 		TOOLBOX_POD=$(kubectl_retry -n rook-ceph get pods -l app=rook-ceph-tools -o jsonpath='{.items[0].metadata.name}')
 		TOOLBOX_POD_STATUS=$(kubectl_retry -n rook-ceph get pod "$TOOLBOX_POD" -ojsonpath='{.status.phase}')
-		[[ "$TOOLBOX_POD_STATUS" != "Running" ]] && \
-			{ echo "Toolbox POD ($TOOLBOX_POD) status: [$TOOLBOX_POD_STATUS]"; continue; }
+		[[ "$TOOLBOX_POD_STATUS" != "Running" ]] &&
+			{
+				echo "Toolbox POD ($TOOLBOX_POD) status: [$TOOLBOX_POD_STATUS]"
+				continue
+			}
 
 		if kubectl_retry exec -n rook-ceph "$TOOLBOX_POD" -it -- rbd pool stats "$RBD_POOL_NAME" &>/dev/null; then
 			echo "RBD ($RBD_POOL_NAME) is successfully created..."
@@ -207,6 +227,9 @@ function check_rbd_stat() {
 	fi
 	echo ""
 }
+
+# update rook URL before doing any operation.
+update_rook_url
 
 case "${1:-}" in
 deploy)

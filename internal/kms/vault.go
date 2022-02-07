@@ -87,9 +87,9 @@ type vaultConnection struct {
 	vaultDestroyKeys bool
 }
 
-type VaultKMS struct {
+type vaultKMS struct {
 	vaultConnection
-	IntegratedDEK
+	integratedDEK
 
 	// vaultPassphrasePath (VPP) used to be added before the "key" of the
 	// secret (like /v1/secret/data/<VPP>/key)
@@ -192,6 +192,11 @@ func (vc *vaultConnection) initConnection(config map[string]interface{}) error {
 	if errors.Is(err, errConfigOptionInvalid) {
 		return err
 	}
+	// set the option if the value was not invalid
+	if firstInit || !errors.Is(err, errConfigOptionMissing) {
+		keyContext[loss.KeyVaultNamespace] = vaultNamespace
+	}
+
 	vaultAuthNamespace := ""
 	err = setConfigString(&vaultAuthNamespace, config, "vaultAuthNamespace")
 	if errors.Is(err, errConfigOptionInvalid) {
@@ -205,7 +210,6 @@ func (vc *vaultConnection) initConnection(config map[string]interface{}) error {
 	// set the option if the value was not invalid
 	if firstInit || !errors.Is(err, errConfigOptionMissing) {
 		vaultConfig[api.EnvVaultNamespace] = vaultAuthNamespace
-		keyContext[loss.KeyVaultNamespace] = vaultNamespace
 	}
 
 	verifyCA := strconv.FormatBool(vaultDefaultCAVerify) // optional
@@ -329,7 +333,7 @@ var _ = RegisterProvider(Provider{
 
 // InitVaultKMS returns an interface to HashiCorp Vault KMS.
 func initVaultKMS(args ProviderInitArgs) (EncryptionKMS, error) {
-	kms := &VaultKMS{}
+	kms := &vaultKMS{}
 	err := kms.initConnection(args.Config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Vault connection: %w", err)
@@ -392,7 +396,7 @@ func initVaultKMS(args ProviderInitArgs) (EncryptionKMS, error) {
 
 // FetchDEK returns passphrase from Vault. The passphrase is stored in a
 // data.data.passphrase structure.
-func (kms *VaultKMS) FetchDEK(key string) (string, error) {
+func (kms *vaultKMS) FetchDEK(key string) (string, error) {
 	s, err := kms.secrets.GetSecret(filepath.Join(kms.vaultPassphrasePath, key), kms.keyContext)
 	if err != nil {
 		return "", err
@@ -411,7 +415,7 @@ func (kms *VaultKMS) FetchDEK(key string) (string, error) {
 }
 
 // StoreDEK saves new passphrase in Vault.
-func (kms *VaultKMS) StoreDEK(key, value string) error {
+func (kms *vaultKMS) StoreDEK(key, value string) error {
 	data := map[string]interface{}{
 		"data": map[string]string{
 			"passphrase": value,
@@ -428,7 +432,7 @@ func (kms *VaultKMS) StoreDEK(key, value string) error {
 }
 
 // RemoveDEK deletes passphrase from Vault.
-func (kms *VaultKMS) RemoveDEK(key string) error {
+func (kms *vaultKMS) RemoveDEK(key string) error {
 	pathKey := filepath.Join(kms.vaultPassphrasePath, key)
 	err := kms.secrets.DeleteSecret(pathKey, kms.getDeleteKeyContext())
 	if err != nil {

@@ -36,7 +36,7 @@ const (
 	// Encryption passphrase location in K8s secrets.
 	encryptionPassphraseKey = "encryptionPassphrase"
 
-	// kmsTypeSecretsMetadata is the SecretsKMS with per-volume encryption,
+	// kmsTypeSecretsMetadata is the secretKMS with per-volume encryption,
 	// where the DEK is stored in the metadata of the volume itself.
 	kmsTypeSecretsMetadata = "metadata"
 
@@ -48,9 +48,9 @@ const (
 	metadataSecretNamespaceKey = "secretNamespace"
 )
 
-// SecretsKMS is default KMS implementation that means no KMS is in use.
-type SecretsKMS struct {
-	IntegratedDEK
+// secretsKMS is default KMS implementation that means no KMS is in use.
+type secretsKMS struct {
+	integratedDEK
 
 	passphrase string
 }
@@ -60,7 +60,7 @@ var _ = RegisterProvider(Provider{
 	Initializer: newSecretsKMS,
 })
 
-// newSecretsKMS initializes a SecretsKMS that uses the passphrase from the
+// newSecretsKMS initializes a secretsKMS that uses the passphrase from the
 // secret that is configured for the StorageClass. This KMS provider uses a
 // single (LUKS) passhprase for all volumes.
 func newSecretsKMS(args ProviderInitArgs) (EncryptionKMS, error) {
@@ -69,35 +69,35 @@ func newSecretsKMS(args ProviderInitArgs) (EncryptionKMS, error) {
 		return nil, errors.New("missing encryption passphrase in secrets")
 	}
 
-	return SecretsKMS{passphrase: passphraseValue}, nil
+	return secretsKMS{passphrase: passphraseValue}, nil
 }
 
 // Destroy frees all used resources.
-func (kms SecretsKMS) Destroy() {
+func (kms secretsKMS) Destroy() {
 	// nothing to do
 }
 
 // FetchDEK returns passphrase from Kubernetes secrets.
-func (kms SecretsKMS) FetchDEK(key string) (string, error) {
+func (kms secretsKMS) FetchDEK(key string) (string, error) {
 	return kms.passphrase, nil
 }
 
 // StoreDEK does nothing, as there is no passphrase per key (volume), so
 // no need to store is anywhere.
-func (kms SecretsKMS) StoreDEK(key, value string) error {
+func (kms secretsKMS) StoreDEK(key, value string) error {
 	return nil
 }
 
 // RemoveDEK is doing nothing as no new passphrases are saved with
-// SecretsKMS.
-func (kms SecretsKMS) RemoveDEK(key string) error {
+// secretsKMS.
+func (kms secretsKMS) RemoveDEK(key string) error {
 	return nil
 }
 
-// SecretsMetadataKMS is a KMS based on the SecretsKMS, but stores the
+// secretsMetadataKMS is a KMS based on the secretKMS, but stores the
 // Data-Encryption-Key (DEK) in the metadata of the volume.
-type SecretsMetadataKMS struct {
-	SecretsKMS
+type secretsMetadataKMS struct {
+	secretsKMS
 }
 
 var _ = RegisterProvider(Provider{
@@ -105,12 +105,12 @@ var _ = RegisterProvider(Provider{
 	Initializer: initSecretsMetadataKMS,
 })
 
-// initSecretsMetadataKMS initializes a SecretsMetadataKMS that wraps a SecretsKMS,
+// initSecretsMetadataKMS initializes a secretsMetadataKMS that wraps a secretKMS,
 // so that the passphrase from the user provided or StorageClass secrets can be used
 // for encrypting/decrypting DEKs that are stored in a detached DEKStore.
 func initSecretsMetadataKMS(args ProviderInitArgs) (EncryptionKMS, error) {
 	var (
-		smKMS                SecretsMetadataKMS
+		smKMS                secretsMetadataKMS
 		encryptionPassphrase string
 		ok                   bool
 		err                  error
@@ -130,13 +130,13 @@ func initSecretsMetadataKMS(args ProviderInitArgs) (EncryptionKMS, error) {
 				"missing %q in storageclass secret", encryptionPassphraseKey)
 		}
 	}
-	smKMS.SecretsKMS = SecretsKMS{passphrase: encryptionPassphrase}
+	smKMS.secretsKMS = secretsKMS{passphrase: encryptionPassphrase}
 
 	return smKMS, nil
 }
 
 // fetchEncryptionPassphrase fetches encryptionPassphrase from user provided secret.
-func (kms SecretsMetadataKMS) fetchEncryptionPassphrase(
+func (kms secretsMetadataKMS) fetchEncryptionPassphrase(
 	config map[string]interface{},
 	defaultNamespace string) (string, error) {
 	var (
@@ -182,11 +182,11 @@ func (kms SecretsMetadataKMS) fetchEncryptionPassphrase(
 }
 
 // Destroy frees all used resources.
-func (kms SecretsMetadataKMS) Destroy() {
-	kms.SecretsKMS.Destroy()
+func (kms secretsMetadataKMS) Destroy() {
+	kms.secretsKMS.Destroy()
 }
 
-func (kms SecretsMetadataKMS) RequiresDEKStore() DEKStoreType {
+func (kms secretsMetadataKMS) RequiresDEKStore() DEKStoreType {
 	return DEKStoreMetadata
 }
 
@@ -202,12 +202,12 @@ type encryptedMetedataDEK struct {
 }
 
 // EncryptDEK encrypts the plainDEK with a key derived from the passphrase from
-// the SecretsKMS and the volumeID.
+// the secretsKMS and the volumeID.
 // The resulting encryptedDEK contains a JSON with the encrypted DEK and the
 // nonce that was used for encrypting.
-func (kms SecretsMetadataKMS) EncryptDEK(volumeID, plainDEK string) (string, error) {
-	// use the passphrase from the SecretsKMS
-	passphrase, err := kms.SecretsKMS.FetchDEK(volumeID)
+func (kms secretsMetadataKMS) EncryptDEK(volumeID, plainDEK string) (string, error) {
+	// use the passphrase from the secretKMS
+	passphrase, err := kms.secretsKMS.FetchDEK(volumeID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get passphrase: %w", err)
 	}
@@ -234,10 +234,10 @@ func (kms SecretsMetadataKMS) EncryptDEK(volumeID, plainDEK string) (string, err
 }
 
 // DecryptDEK takes the JSON formatted `encryptedMetadataDEK` contents, and it
-// fetches SecretsKMS passphrase to decrypt the DEK.
-func (kms SecretsMetadataKMS) DecryptDEK(volumeID, encryptedDEK string) (string, error) {
-	// use the passphrase from the SecretsKMS
-	passphrase, err := kms.SecretsKMS.FetchDEK(volumeID)
+// fetches secretKMS passphrase to decrypt the DEK.
+func (kms secretsMetadataKMS) DecryptDEK(volumeID, encryptedDEK string) (string, error) {
+	// use the passphrase from the secretKMS
+	passphrase, err := kms.secretsKMS.FetchDEK(volumeID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get passphrase: %w", err)
 	}

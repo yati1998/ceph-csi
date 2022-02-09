@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/IBM/keyprotect-go-client v0.7.0
-	github.com/aws/aws-sdk-go v1.42.40
+	github.com/aws/aws-sdk-go v1.42.48
 	github.com/ceph/ceph-csi/api v0.0.0-00010101000000-000000000000
 	github.com/ceph/go-ceph v0.13.0
 	github.com/container-storage-interface/spec v1.5.0
@@ -24,7 +24,7 @@ require (
 	github.com/stretchr/testify v1.7.0
 	golang.org/x/crypto v0.0.0-20210817164053-32db794688a5
 	golang.org/x/sys v0.0.0-20220114195835-da31bd327af9
-	google.golang.org/grpc v1.43.0
+	google.golang.org/grpc v1.44.0
 	google.golang.org/protobuf v1.27.1
 	k8s.io/api v0.23.2
 	k8s.io/apimachinery v0.23.2

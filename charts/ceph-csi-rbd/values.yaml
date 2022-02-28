@@ -279,10 +279,10 @@ storageClass:
   # eg: pool: replicapool
   pool: replicapool
 
-  # (required) RBD image features, CSI creates image with image-format 2
-  # CSI RBD currently supports `layering`, `journaling`, `exclusive-lock`,
-  # `object-map`, `fast-diff` features. If `journaling` is enabled, must
-  # enable `exclusive-lock` too.
+  # (optional) RBD image features, CSI creates image with image-format 2 CSI
+  # RBD currently supports `layering`, `journaling`, `exclusive-lock`,
+  # `object-map`, `fast-diff`, `deep-flatten` features. If `journaling` is
+  # enabled, must enable `exclusive-lock` too.
   # imageFeatures: layering,journaling,exclusive-lock,object-map,fast-diff
   imageFeatures: "layering"
 
@@ -399,6 +399,10 @@ storageClass:
   # mountOptions:
   #   - discard
 
+# Mount the host /etc/selinux inside pods to support
+# selinux-enabled filesystems
+selinuxMount: true
+
 secret:
   # Specifies whether the secret should be created
   create: false
@@ -443,5 +447,7 @@ configMapName: ceph-csi-config
 # configMapKey:
 # Use an externally provided configmap
 externallyManagedConfigmap: false
+# Name of the configmap used for ceph.conf
+cephConfConfigMapName: ceph-config
 # Name of the configmap used for encryption kms configuration
 kmsConfigMapName: ceph-csi-encryption-kms-config

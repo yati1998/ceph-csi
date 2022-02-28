@@ -142,6 +142,7 @@ charts and their default values.
 | `driverName`                                   | Name of the csi-driver                                                                                                                               | `rbd.csi.ceph.com`                                 |
 | `configMapName`                                | Name of the configmap which contains cluster configuration                                                                                           | `ceph-csi-config`                                  |
 | `externallyManagedConfigmap`                   | Specifies the use of an externally provided configmap                                                                                                | `false`                                            |
+| `cephConfConfigMapName`                        | Name of the configmap which contains ceph.conf configuration                                                                                           | `ceph-config`                                  |
 | `kmsConfigMapName`                             | Name of the configmap used for encryption kms configuration                                                                                          | `ceph-csi-encryption-kms-config`                   |
 | `storageClass.create`                          | Specifies whether the StorageClass should be created                                                                                                 | `false`                                            |
 | `storageClass.name`                            | Specifies the rbd StorageClass name                                                                                                                  | `csi-rbd-sc`                                       |
@@ -175,6 +176,7 @@ charts and their default values.
 | `secret.userID`                                | Specifies the user ID of the rbd secret                                                                                                              | `<plaintext ID>`                                   |
 | `secret.userKey`                               | Specifies the key that corresponds to the userID                                                                                                     | `<Ceph auth key corresponding to ID above>`        |
 | `secret.encryptionPassphrase`                  | Specifies the encryption passphrase of the secret                                                                                                    | `test_passphrase`                                  |
+| `selinuxMount`                                | Mount the host /etc/selinux inside pods to support selinux-enabled filesystems                                                                                                      | `true`                                            |
 
 ### Command Line
 

@@ -209,11 +209,15 @@ var supportedFeatures = map[string]imageFeature{
 		needRbdNbd: true,
 		dependsOn:  []string{librbd.FeatureNameExclusiveLock},
 	},
+	librbd.FeatureNameDeepFlatten: {
+		needRbdNbd: false,
+	},
 }
 
 // GetKrbdSupportedFeatures load the module if needed and return supported
 // features attribute as a string.
 func GetKrbdSupportedFeatures() (string, error) {
+	var stderr string
 	// check if the module is loaded or compiled in
 	_, err := os.Stat(krbdSupportedFeaturesFile)
 	if err != nil {
@@ -223,9 +227,9 @@ func GetKrbdSupportedFeatures() (string, error) {
 			return "", err
 		}
 		// try to load the module
-		_, _, err = util.ExecCommand(context.TODO(), "modprobe", rbdDefaultMounter)
+		_, stderr, err = util.ExecCommand(context.TODO(), "modprobe", rbdDefaultMounter)
 		if err != nil {
-			log.ErrorLogMsg("modprobe failed: %v", err)
+			log.ErrorLogMsg("modprobe failed (%v): %q", err, stderr)
 
 			return "", err
 		}
@@ -467,11 +471,10 @@ func (ri *rbdImage) isInUse() (bool, error) {
 	return len(watchers) > defaultWatchers, nil
 }
 
-// checkImageFeatures check presence of imageFeatures parameter. It returns true when
-// there imageFeatures is missing or empty, skips missing parameter for non-static volumes
-// for backward compatibility.
-func checkImageFeatures(imageFeatures string, ok, static bool) bool {
-	return static && (!ok || imageFeatures == "")
+// checkValidImageFeatures check presence of imageFeatures parameter. It returns false when
+// there imageFeatures is present and empty.
+func checkValidImageFeatures(imageFeatures string, ok bool) bool {
+	return !(ok && imageFeatures == "")
 }
 
 // isNotMountPoint checks whether MountPoint does not exists and

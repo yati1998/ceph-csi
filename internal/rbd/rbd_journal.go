@@ -267,7 +267,7 @@ func (rv *rbdVolume) Exists(ctx context.Context, parentVol *rbdVolume) (bool, er
 	rv.RbdImageName = imageData.ImageAttributes.ImageName
 	rv.ImageID = imageData.ImageAttributes.ImageID
 	// check if topology constraints match what is found
-	rv.Topology, err = util.MatchTopologyForPool(rv.TopologyPools, rv.TopologyRequirement,
+	_, _, rv.Topology, err = util.MatchPoolAndTopology(rv.TopologyPools, rv.TopologyRequirement,
 		imageData.ImagePool)
 	if err != nil {
 		// TODO check if need any undo operation here, or ErrVolNameConflict
@@ -303,7 +303,6 @@ func (rv *rbdVolume) Exists(ctx context.Context, parentVol *rbdVolume) (bool, er
 
 		return false, err
 	}
-	// TODO: check image needs flattening and completed?
 
 	err = rv.repairImageID(ctx, j, false)
 	if err != nil {
@@ -413,7 +412,10 @@ func updateTopologyConstraints(rbdVol *rbdVolume, rbdSnap *rbdSnapshot) error {
 	var err error
 	if rbdSnap != nil {
 		// check if topology constraints matches snapshot pool
-		rbdVol.Topology, err = util.MatchTopologyForPool(rbdVol.TopologyPools,
+		var poolName string
+		var dataPoolName string
+
+		poolName, dataPoolName, rbdVol.Topology, err = util.MatchPoolAndTopology(rbdVol.TopologyPools,
 			rbdVol.TopologyRequirement, rbdSnap.Pool)
 		if err != nil {
 			return err
@@ -421,7 +423,8 @@ func updateTopologyConstraints(rbdVol *rbdVolume, rbdSnap *rbdSnapshot) error {
 
 		// update Pool, if it was topology constrained
 		if rbdVol.Topology != nil {
-			rbdVol.Pool = rbdSnap.Pool
+			rbdVol.Pool = poolName
+			rbdVol.DataPool = dataPoolName
 		}
 
 		return nil
@@ -532,7 +535,7 @@ func undoVolReservation(ctx context.Context, rbdVol *rbdVolume, cr *util.Credent
 // which are not same across clusters.
 func RegenerateJournal(
 	volumeAttributes map[string]string,
-	volumeID, requestName string,
+	volumeID, requestName, owner string,
 	cr *util.Credentials) (string, error) {
 	ctx := context.Background()
 	var (
@@ -551,6 +554,8 @@ func RegenerateJournal(
 		return "", fmt.Errorf("%w: error decoding volume ID (%s) (%s)",
 			ErrInvalidVolID, err, rbdVol.VolID)
 	}
+
+	rbdVol.Owner = owner
 
 	kmsID, err = rbdVol.ParseEncryptionOpts(ctx, volumeAttributes)
 	if err != nil {

@@ -27,6 +27,7 @@ import (
 	fsutil "github.com/ceph/ceph-csi/internal/cephfs/util"
 	csicommon "github.com/ceph/ceph-csi/internal/csi-common"
 	"github.com/ceph/ceph-csi/internal/util"
+	"github.com/ceph/ceph-csi/internal/util/k8s"
 	"github.com/ceph/ceph-csi/internal/util/log"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -148,6 +149,35 @@ func checkContentSource(
 	return nil, nil, nil, status.Errorf(codes.InvalidArgument, "not a proper volume source %v", volumeSource)
 }
 
+// checkValidCreateVolumeRequest checks if the request is valid
+// CreateVolumeRequest by inspecting the request parameters.
+func checkValidCreateVolumeRequest(
+	vol,
+	parentVol *store.VolumeOptions,
+	pvID *store.VolumeIdentifier,
+	sID *store.SnapshotIdentifier) error {
+	switch {
+	case pvID != nil:
+		if vol.Size < parentVol.Size {
+			return fmt.Errorf(
+				"cannot clone from volume %s: volume size %d is smaller than source volume size %d",
+				pvID.VolumeID,
+				parentVol.Size,
+				vol.Size)
+		}
+	case sID != nil:
+		if vol.Size < parentVol.Size {
+			return fmt.Errorf(
+				"cannot restore from snapshot %s: volume size %d is smaller than source volume size %d",
+				sID.SnapshotID,
+				parentVol.Size,
+				vol.Size)
+		}
+	}
+
+	return nil
+}
+
 // CreateVolume creates a reservation and the volume in backend, if it is not already present.
 // nolint:gocognit,gocyclo,nestif,cyclop // TODO: reduce complexity
 func (cs *ControllerServer) CreateVolume(
@@ -199,6 +229,11 @@ func (cs *ControllerServer) CreateVolume(
 		defer parentVol.Destroy()
 	}
 
+	err = checkValidCreateVolumeRequest(volOptions, parentVol, pvID, sID)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	vID, err := store.CheckVolExists(ctx, volOptions, parentVol, pvID, sID, cr)
 	if err != nil {
 		if cerrors.IsCloneRetryError(err) {
@@ -233,7 +268,8 @@ func (cs *ControllerServer) CreateVolume(
 			}
 		}
 
-		volumeContext := req.GetParameters()
+		// remove kubernetes csi prefixed parameters.
+		volumeContext := k8s.RemoveCSIPrefixedParameters(req.GetParameters())
 		volumeContext["subvolumeName"] = vID.FsSubvolName
 		volumeContext["subvolumePath"] = volOptions.RootPath
 		volume := &csi.Volume{
@@ -306,7 +342,8 @@ func (cs *ControllerServer) CreateVolume(
 
 	log.DebugLog(ctx, "cephfs: successfully created backing volume named %s for request name %s",
 		vID.FsSubvolName, requestName)
-	volumeContext := req.GetParameters()
+	// remove kubernetes csi prefixed parameters.
+	volumeContext := k8s.RemoveCSIPrefixedParameters(req.GetParameters())
 	volumeContext["subvolumeName"] = vID.FsSubvolName
 	volumeContext["subvolumePath"] = volOptions.RootPath
 	volume := &csi.Volume{
@@ -786,10 +823,10 @@ func (cs *ControllerServer) DeleteSnapshot(
 			// success as deletion is complete
 			return &csi.DeleteSnapshotResponse{}, nil
 		case errors.Is(err, cerrors.ErrSnapNotFound):
-			err = store.UndoSnapReservation(ctx, volOpt, *sid, sid.FsSnapshotName, cr)
+			err = store.UndoSnapReservation(ctx, volOpt, *sid, sid.RequestName, cr)
 			if err != nil {
 				log.ErrorLog(ctx, "failed to remove reservation for snapname (%s) with backing snap (%s) (%s)",
-					sid.FsSubvolName, sid.FsSnapshotName, err)
+					sid.RequestName, sid.FsSnapshotName, err)
 
 				return nil, status.Error(codes.Internal, err.Error())
 			}
@@ -799,10 +836,10 @@ func (cs *ControllerServer) DeleteSnapshot(
 			// if the error is ErrVolumeNotFound, the subvolume is already deleted
 			// from backend, Hence undo the omap entries and return success
 			log.ErrorLog(ctx, "Volume not present")
-			err = store.UndoSnapReservation(ctx, volOpt, *sid, sid.FsSnapshotName, cr)
+			err = store.UndoSnapReservation(ctx, volOpt, *sid, sid.RequestName, cr)
 			if err != nil {
 				log.ErrorLog(ctx, "failed to remove reservation for snapname (%s) with backing snap (%s) (%s)",
-					sid.FsSubvolName, sid.FsSnapshotName, err)
+					sid.RequestName, sid.FsSnapshotName, err)
 
 				return nil, status.Error(codes.Internal, err.Error())
 			}
@@ -837,7 +874,7 @@ func (cs *ControllerServer) DeleteSnapshot(
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	err = store.UndoSnapReservation(ctx, volOpt, *sid, sid.FsSnapshotName, cr)
+	err = store.UndoSnapReservation(ctx, volOpt, *sid, sid.RequestName, cr)
 	if err != nil {
 		log.ErrorLog(ctx, "failed to remove reservation for snapname (%s) with backing snap (%s) (%s)",
 			sid.RequestName, sid.FsSnapshotName, err)

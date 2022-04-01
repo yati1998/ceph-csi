@@ -1142,7 +1142,7 @@ func generateVolumeFromMapping(
 
 func genVolFromVolumeOptions(
 	ctx context.Context,
-	volOptions, credentials map[string]string,
+	volOptions map[string]string,
 	disableInUseChecks, checkClusterIDMapping bool) (*rbdVolume, error) {
 	var (
 		ok         bool
@@ -1194,11 +1194,6 @@ func genVolFromVolumeOptions(
 		rbdVol.ImageFeatureSet.Names(),
 		rbdVol.Mounter)
 	rbdVol.DisableInUseChecks = disableInUseChecks
-
-	err = rbdVol.initKMS(ctx, volOptions, credentials)
-	if err != nil {
-		return nil, err
-	}
 
 	return rbdVol, nil
 }
@@ -1438,6 +1433,47 @@ func (ri *rbdImage) getImageInfo() error {
 	ri.CreatedAt = protoTime
 
 	return nil
+}
+
+// getParent returns parent image if it exists.
+func (ri *rbdImage) getParent() (*rbdImage, error) {
+	err := ri.getImageInfo()
+	if err != nil {
+		return nil, err
+	}
+	if ri.ParentName == "" {
+		return nil, nil
+	}
+
+	parentImage := rbdImage{}
+	parentImage.conn = ri.conn.Copy()
+	parentImage.ClusterID = ri.ClusterID
+	parentImage.Monitors = ri.Monitors
+	parentImage.Pool = ri.ParentPool
+	parentImage.RadosNamespace = ri.RadosNamespace
+	parentImage.RbdImageName = ri.ParentName
+
+	err = parentImage.getImageInfo()
+	if err != nil {
+		return nil, err
+	}
+
+	return &parentImage, nil
+}
+
+// flattenParent flatten the given image's parent if it exists according to hard and soft
+// limits.
+func (ri *rbdImage) flattenParent(ctx context.Context, hardLimit, softLimit uint) error {
+	parentImage, err := ri.getParent()
+	if err != nil {
+		return err
+	}
+
+	if parentImage == nil {
+		return nil
+	}
+
+	return parentImage.flattenRbdImage(ctx, false, hardLimit, softLimit)
 }
 
 /*

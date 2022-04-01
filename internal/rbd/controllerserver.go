@@ -22,6 +22,7 @@ import (
 
 	csicommon "github.com/ceph/ceph-csi/internal/csi-common"
 	"github.com/ceph/ceph-csi/internal/util"
+	"github.com/ceph/ceph-csi/internal/util/k8s"
 	"github.com/ceph/ceph-csi/internal/util/log"
 
 	librbd "github.com/ceph/go-ceph/rbd"
@@ -123,9 +124,23 @@ func (cs *ControllerServer) parseVolCreateRequest(
 	rbdVol, err := genVolFromVolumeOptions(
 		ctx,
 		req.GetParameters(),
-		req.GetSecrets(),
 		isMultiWriter && isBlock,
 		false)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// if the KMS is of type VaultToken, additional metadata is needed
+	// depending on the tenant, the KMS can be configured with other
+	// options
+	// FIXME: this works only on Kubernetes, how do other CO supply metadata?
+	// namespace is derived from the `csi.storage.k8s.io/pvc/namespace`
+	// parameter.
+
+	// get the owner of the PVC which is required for few encryption related operations
+	rbdVol.Owner = k8s.GetOwner(req.GetParameters())
+
+	err = rbdVol.initKMS(ctx, req.GetParameters(), req.GetSecrets())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -159,7 +174,8 @@ func (cs *ControllerServer) parseVolCreateRequest(
 }
 
 func buildCreateVolumeResponse(req *csi.CreateVolumeRequest, rbdVol *rbdVolume) *csi.CreateVolumeResponse {
-	volumeContext := req.GetParameters()
+	// remove kubernetes csi prefixed parameters.
+	volumeContext := k8s.RemoveCSIPrefixedParameters(req.GetParameters())
 	volumeContext["pool"] = rbdVol.Pool
 	volumeContext["journalPool"] = rbdVol.JournalPool
 	volumeContext["imageName"] = rbdVol.RbdImageName
@@ -286,7 +302,7 @@ func (cs *ControllerServer) CreateVolume(
 		return nil, err
 	}
 
-	err = flattenParentImage(ctx, parentVol, cr)
+	err = flattenParentImage(ctx, parentVol, rbdSnap, cr)
 	if err != nil {
 		return nil, err
 	}
@@ -297,11 +313,9 @@ func (cs *ControllerServer) CreateVolume(
 	}
 	defer func() {
 		if err != nil {
-			if !errors.Is(err, ErrFlattenInProgress) {
-				errDefer := undoVolReservation(ctx, rbdVol, cr)
-				if errDefer != nil {
-					log.WarningLog(ctx, "failed undoing reservation of volume: %s (%s)", req.GetName(), errDefer)
-				}
+			errDefer := undoVolReservation(ctx, rbdVol, cr)
+			if errDefer != nil {
+				log.WarningLog(ctx, "failed undoing reservation of volume: %s (%s)", req.GetName(), errDefer)
 			}
 		}
 	}()
@@ -318,12 +332,38 @@ func (cs *ControllerServer) CreateVolume(
 	return buildCreateVolumeResponse(req, rbdVol), nil
 }
 
-func flattenParentImage(ctx context.Context, rbdVol *rbdVolume, cr *util.Credentials) error {
+// flattenParentImage is to be called before proceeding with creating volume,
+// with datasource. This function flattens the parent image accordingly to
+// make sure no flattening is required during or after the new volume creation.
+// For parent volume, it's parent(temp clone or snapshot) is flattened.
+// For parent snapshot, the snapshot itself is flattened.
+func flattenParentImage(
+	ctx context.Context,
+	rbdVol *rbdVolume,
+	rbdSnap *rbdSnapshot,
+	cr *util.Credentials) error {
+	// flatten the image's parent before the reservation to avoid
+	// stale entries in post creation if we return ABORT error and the
+	// DeleteVolume RPC is not called.
+	// reducing the limit for cloned images to make sure the limit is in range,
+	// If the intermediate clone reaches the depth we may need to return ABORT
+	// error message as it need to be flatten before continuing, this may leak
+	// omap entries and stale temporary snapshots in corner cases, if we reduce
+	// the limit and check for the depth of the parent image clain itself we
+	// can flatten the parent images before used to avoid the stale omap entries.
+	hardLimit := rbdHardMaxCloneDepth
+	softLimit := rbdSoftMaxCloneDepth
 	if rbdVol != nil {
-		// flatten the image or its parent before the reservation to avoid
-		// stale entries in post creation if we return ABORT error and the
-		// delete volume is not called
-		err := rbdVol.flattenCloneImage(ctx)
+		// choosing 2, since cloning image creates a temp clone and a final clone which
+		// will add a total depth of 2.
+		const depthToAvoidFlatten = 2
+		if rbdHardMaxCloneDepth > depthToAvoidFlatten {
+			hardLimit = rbdHardMaxCloneDepth - depthToAvoidFlatten
+		}
+		if rbdSoftMaxCloneDepth > depthToAvoidFlatten {
+			softLimit = rbdSoftMaxCloneDepth - depthToAvoidFlatten
+		}
+		err := rbdVol.flattenParent(ctx, hardLimit, softLimit)
 		if err != nil {
 			return getGRPCErrorForCreateVolume(err)
 		}
@@ -333,6 +373,32 @@ func flattenParentImage(ctx context.Context, rbdVol *rbdVolume, cr *util.Credent
 		err = flattenTemporaryClonedImages(ctx, rbdVol, cr)
 		if err != nil {
 			return err
+		}
+	}
+	if rbdSnap != nil {
+		err := rbdSnap.Connect(cr)
+		if err != nil {
+			return getGRPCErrorForCreateVolume(err)
+		}
+		// in case of any error call Destroy for cleanup.
+		defer func() {
+			if err != nil {
+				rbdSnap.Destroy()
+			}
+		}()
+
+		// choosing 1, since restore from snapshot adds one depth.
+		const depthToAvoidFlatten = 1
+		if rbdHardMaxCloneDepth > depthToAvoidFlatten {
+			hardLimit = rbdHardMaxCloneDepth - depthToAvoidFlatten
+		}
+		if rbdSoftMaxCloneDepth > depthToAvoidFlatten {
+			softLimit = rbdSoftMaxCloneDepth - depthToAvoidFlatten
+		}
+
+		err = rbdSnap.flattenRbdImage(ctx, false, hardLimit, softLimit)
+		if err != nil {
+			return getGRPCErrorForCreateVolume(err)
 		}
 	}
 
@@ -574,25 +640,14 @@ func (cs *ControllerServer) createBackingImage(
 
 	defer func() {
 		if err != nil {
-			if !errors.Is(err, ErrFlattenInProgress) {
-				if deleteErr := rbdVol.deleteImage(ctx); deleteErr != nil {
-					log.ErrorLog(ctx, "failed to delete rbd image: %s with error: %v", rbdVol, deleteErr)
-				}
+			if deleteErr := rbdVol.deleteImage(ctx); deleteErr != nil {
+				log.ErrorLog(ctx, "failed to delete rbd image: %s with error: %v", rbdVol, deleteErr)
 			}
 		}
 	}()
 	err = rbdVol.storeImageID(ctx, j)
 	if err != nil {
 		return status.Error(codes.Internal, err.Error())
-	}
-
-	if rbdSnap != nil {
-		err = rbdVol.flattenRbdImage(ctx, false, rbdHardMaxCloneDepth, rbdSoftMaxCloneDepth)
-		if err != nil {
-			log.ErrorLog(ctx, "failed to flatten image %s: %v", rbdVol, err)
-
-			return err
-		}
 	}
 
 	return nil

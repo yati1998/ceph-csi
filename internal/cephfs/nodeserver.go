@@ -47,11 +47,10 @@ type NodeServer struct {
 
 func getCredentialsForVolume(
 	volOptions *store.VolumeOptions,
-	req *csi.NodeStageVolumeRequest) (*util.Credentials, error) {
+	secrets map[string]string) (*util.Credentials, error) {
 	var (
-		err     error
-		cr      *util.Credentials
-		secrets = req.GetSecrets()
+		err error
+		cr  *util.Credentials
 	)
 
 	if volOptions.ProvisionVolume {
@@ -64,7 +63,7 @@ func getCredentialsForVolume(
 	} else {
 		// The volume is pre-made, credentials are in node stage secrets
 
-		cr, err = util.NewUserCredentials(req.GetSecrets())
+		cr, err = util.NewUserCredentials(secrets)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get user credentials from node stage secrets: %w", err)
 		}
@@ -73,11 +72,38 @@ func getCredentialsForVolume(
 	return cr, nil
 }
 
+func (ns *NodeServer) getVolumeOptions(
+	ctx context.Context,
+	volID fsutil.VolumeID,
+	volContext,
+	volSecrets map[string]string,
+) (*store.VolumeOptions, error) {
+	volOptions, _, err := store.NewVolumeOptionsFromVolID(ctx, string(volID), volContext, volSecrets)
+	if err != nil {
+		if !errors.Is(err, cerrors.ErrInvalidVolID) {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		volOptions, _, err = store.NewVolumeOptionsFromStaticVolume(string(volID), volContext)
+		if err != nil {
+			if !errors.Is(err, cerrors.ErrNonStaticVolume) {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+
+			volOptions, _, err = store.NewVolumeOptionsFromMonitorList(string(volID), volContext, volSecrets)
+			if err != nil {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+		}
+	}
+
+	return volOptions, nil
+}
+
 // NodeStageVolume mounts the volume to a staging path on the node.
 func (ns *NodeServer) NodeStageVolume(
 	ctx context.Context,
 	req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	var volOptions *store.VolumeOptions
 	if err := util.ValidateNodeStageVolumeRequest(req); err != nil {
 		return nil, err
 	}
@@ -94,30 +120,24 @@ func (ns *NodeServer) NodeStageVolume(
 	}
 	defer ns.VolumeLocks.Release(req.GetVolumeId())
 
-	volOptions, _, err := store.NewVolumeOptionsFromVolID(ctx, string(volID), req.GetVolumeContext(), req.GetSecrets())
+	volOptions, err := ns.getVolumeOptions(ctx, volID, req.GetVolumeContext(), req.GetSecrets())
 	if err != nil {
-		if !errors.Is(err, cerrors.ErrInvalidVolID) {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-
-		// gets mon IPs from the supplied cluster info
-		volOptions, _, err = store.NewVolumeOptionsFromStaticVolume(string(volID), req.GetVolumeContext())
-		if err != nil {
-			if !errors.Is(err, cerrors.ErrNonStaticVolume) {
-				return nil, status.Error(codes.Internal, err.Error())
-			}
-
-			// get mon IPs from the volume context
-			volOptions, _, err = store.NewVolumeOptionsFromMonitorList(string(volID), req.GetVolumeContext(),
-				req.GetSecrets())
-			if err != nil {
-				return nil, status.Error(codes.Internal, err.Error())
-			}
-		}
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 	defer volOptions.Destroy()
 
+	mnt, err := mounter.New(volOptions)
+	if err != nil {
+		log.ErrorLog(ctx, "failed to create mounter for volume %s: %v", volID, err)
+
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
 	// Check if the volume is already mounted
+
+	if err = ns.tryRestoreFuseMountInNodeStage(ctx, mnt, stagingTargetPath); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to try to restore FUSE mounts: %v", err)
+	}
 
 	isMnt, err := util.IsMountPoint(stagingTargetPath)
 	if err != nil {
@@ -133,20 +153,53 @@ func (ns *NodeServer) NodeStageVolume(
 	}
 
 	// It's not, mount now
-	if err = ns.mount(ctx, volOptions, req); err != nil {
+
+	if err = ns.mount(
+		ctx,
+		mnt,
+		volOptions,
+		fsutil.VolumeID(req.GetVolumeId()),
+		req.GetStagingTargetPath(),
+		req.GetSecrets(),
+		req.GetVolumeCapability(),
+	); err != nil {
 		return nil, err
 	}
 
 	log.DebugLog(ctx, "cephfs: successfully mounted volume %s to %s", volID, stagingTargetPath)
 
+	if _, isFuse := mnt.(*mounter.FuseMounter); isFuse {
+		// FUSE mount recovery needs NodeStageMountinfo records.
+
+		if err = fsutil.WriteNodeStageMountinfo(volID, &fsutil.NodeStageMountinfo{
+			VolumeCapability: req.GetVolumeCapability(),
+			Secrets:          req.GetSecrets(),
+		}); err != nil {
+			log.ErrorLog(ctx, "cephfs: failed to write NodeStageMountinfo for volume %s: %v", volID, err)
+
+			// Try to clean node stage mount.
+			if unmountErr := mounter.UnmountVolume(ctx, stagingTargetPath); unmountErr != nil {
+				log.ErrorLog(ctx, "cephfs: failed to unmount %s in WriteNodeStageMountinfo clean up: %v",
+					stagingTargetPath, unmountErr)
+			}
+
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-func (*NodeServer) mount(ctx context.Context, volOptions *store.VolumeOptions, req *csi.NodeStageVolumeRequest) error {
-	stagingTargetPath := req.GetStagingTargetPath()
-	volID := fsutil.VolumeID(req.GetVolumeId())
-
-	cr, err := getCredentialsForVolume(volOptions, req)
+func (*NodeServer) mount(
+	ctx context.Context,
+	mnt mounter.VolumeMounter,
+	volOptions *store.VolumeOptions,
+	volID fsutil.VolumeID,
+	stagingTargetPath string,
+	secrets map[string]string,
+	volCap *csi.VolumeCapability,
+) error {
+	cr, err := getCredentialsForVolume(volOptions, secrets)
 	if err != nil {
 		log.ErrorLog(ctx, "failed to get ceph credentials for volume %s: %v", volID, err)
 
@@ -154,20 +207,13 @@ func (*NodeServer) mount(ctx context.Context, volOptions *store.VolumeOptions, r
 	}
 	defer cr.DeleteCredentials()
 
-	m, err := mounter.New(volOptions)
-	if err != nil {
-		log.ErrorLog(ctx, "failed to create mounter for volume %s: %v", volID, err)
-
-		return status.Error(codes.Internal, err.Error())
-	}
-
-	log.DebugLog(ctx, "cephfs: mounting volume %s with %s", volID, m.Name())
+	log.DebugLog(ctx, "cephfs: mounting volume %s with %s", volID, mnt.Name())
 
 	readOnly := "ro"
 
-	if req.VolumeCapability.AccessMode.Mode == csi.VolumeCapability_AccessMode_MULTI_NODE_READER_ONLY ||
-		req.VolumeCapability.AccessMode.Mode == csi.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY {
-		switch m.(type) {
+	if volCap.AccessMode.Mode == csi.VolumeCapability_AccessMode_MULTI_NODE_READER_ONLY ||
+		volCap.AccessMode.Mode == csi.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY {
+		switch mnt.(type) {
 		case *mounter.FuseMounter:
 			if !csicommon.MountOptionContains(strings.Split(volOptions.FuseMountOptions, ","), readOnly) {
 				volOptions.FuseMountOptions = util.MountOptionsAdd(volOptions.FuseMountOptions, readOnly)
@@ -179,7 +225,7 @@ func (*NodeServer) mount(ctx context.Context, volOptions *store.VolumeOptions, r
 		}
 	}
 
-	if err = m.Mount(ctx, stagingTargetPath, cr, volOptions); err != nil {
+	if err = mnt.Mount(ctx, stagingTargetPath, cr, volOptions); err != nil {
 		log.ErrorLog(ctx,
 			"failed to mount volume %s: %v Check dmesg logs if required.",
 			volID,
@@ -201,8 +247,9 @@ func (ns *NodeServer) NodePublishVolume(
 		return nil, err
 	}
 
+	stagingTargetPath := req.GetStagingTargetPath()
 	targetPath := req.GetTargetPath()
-	volID := req.GetVolumeId()
+	volID := fsutil.VolumeID(req.GetVolumeId())
 
 	// Considering kubelet make sure the stage and publish operations
 	// are serialized, we dont need any extra locking in nodePublish
@@ -213,11 +260,33 @@ func (ns *NodeServer) NodePublishVolume(
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	if err := ns.tryRestoreFuseMountsInNodePublish(
+		ctx,
+		volID,
+		stagingTargetPath,
+		targetPath,
+		req.GetVolumeContext(),
+	); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to try to restore FUSE mounts: %v", err)
+	}
+
 	if req.GetReadonly() {
 		mountOptions = append(mountOptions, "ro")
 	}
 
 	mountOptions = csicommon.ConstructMountOptions(mountOptions, req.GetVolumeCapability())
+
+	// Ensure staging target path is a mountpoint.
+
+	if isMnt, err := util.IsMountPoint(stagingTargetPath); err != nil {
+		log.ErrorLog(ctx, "stat failed: %v", err)
+
+		return nil, status.Error(codes.Internal, err.Error())
+	} else if !isMnt {
+		return nil, status.Errorf(
+			codes.Internal, "staging path %s for volume %s is not a mountpoint", stagingTargetPath, volID,
+		)
+	}
 
 	// Check if the volume is already mounted
 
@@ -238,8 +307,8 @@ func (ns *NodeServer) NodePublishVolume(
 
 	if err = mounter.BindMount(
 		ctx,
-		req.GetStagingTargetPath(),
-		req.GetTargetPath(),
+		stagingTargetPath,
+		targetPath,
 		req.GetReadonly(),
 		mountOptions); err != nil {
 		log.ErrorLog(ctx, "failed to bind-mount volume %s: %v", volID, err)
@@ -260,11 +329,14 @@ func (ns *NodeServer) NodeUnpublishVolume(
 	if err = util.ValidateNodeUnpublishVolumeRequest(req); err != nil {
 		return nil, err
 	}
+
 	// considering kubelet make sure node operations like unpublish/unstage...etc can not be called
 	// at same time, an explicit locking at time of nodeunpublish is not required.
 	targetPath := req.GetTargetPath()
 	isMnt, err := util.IsMountPoint(targetPath)
 	if err != nil {
+		log.ErrorLog(ctx, "stat failed: %v", err)
+
 		if os.IsNotExist(err) {
 			// targetPath has already been deleted
 			log.DebugLog(ctx, "targetPath: %s has already been deleted", targetPath)
@@ -272,7 +344,14 @@ func (ns *NodeServer) NodeUnpublishVolume(
 			return &csi.NodeUnpublishVolumeResponse{}, nil
 		}
 
-		return nil, status.Error(codes.Internal, err.Error())
+		if !util.IsCorruptedMountError(err) {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		// Corrupted mounts need to be unmounted properly too,
+		// regardless of the mounter used. Continue as normal.
+		log.DebugLog(ctx, "cephfs: detected corrupted mount in publish target path %s, trying to unmount anyway", targetPath)
+		isMnt = true
 	}
 	if !isMnt {
 		if err = os.RemoveAll(targetPath); err != nil {
@@ -316,8 +395,16 @@ func (ns *NodeServer) NodeUnstageVolume(
 
 	stagingTargetPath := req.GetStagingTargetPath()
 
+	if err = fsutil.RemoveNodeStageMountinfo(fsutil.VolumeID(volID)); err != nil {
+		log.ErrorLog(ctx, "cephfs: failed to remove NodeStageMountinfo for volume %s: %v", volID, err)
+
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
 	isMnt, err := util.IsMountPoint(stagingTargetPath)
 	if err != nil {
+		log.ErrorLog(ctx, "stat failed: %v", err)
+
 		if os.IsNotExist(err) {
 			// targetPath has already been deleted
 			log.DebugLog(ctx, "targetPath: %s has already been deleted", stagingTargetPath)
@@ -325,7 +412,16 @@ func (ns *NodeServer) NodeUnstageVolume(
 			return &csi.NodeUnstageVolumeResponse{}, nil
 		}
 
-		return nil, status.Error(codes.Internal, err.Error())
+		if !util.IsCorruptedMountError(err) {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		// Corrupted mounts need to be unmounted properly too,
+		// regardless of the mounter used. Continue as normal.
+		log.DebugLog(ctx,
+			"cephfs: detected corrupted mount in staging target path %s, trying to unmount anyway",
+			stagingTargetPath)
+		isMnt = true
 	}
 	if !isMnt {
 		return &csi.NodeUnstageVolumeResponse{}, nil

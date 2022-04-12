@@ -90,12 +90,12 @@ are available while running tests:
 | flag              | description                                                                   |
 | ----------------- | ----------------------------------------------------------------------------- |
 | deploy-timeout    | Timeout to wait for created kubernetes resources (default: 10 minutes)        |
-| deploy-cephfs     | Deploy cephFS csi driver as part of E2E (default: true)                       |
-| deploy-rbd        | Deploy rbd csi driver as part of E2E (default: true)                          |
-| test-cephfs       | Test cephFS csi driver as part of E2E (default: true)                         |
+| deploy-cephfs     | Deploy cephFS CSI driver as part of E2E (default: true)                       |
+| deploy-rbd        | Deploy rbd CSI driver as part of E2E (default: true)                          |
+| test-cephfs       | Test cephFS CSI driver as part of E2E (default: true)                         |
 | upgrade-testing   | Perform upgrade testing (default: false)                                      |
-| upgrade-version   | Target version for upgrade testing (default: "v3.3.1")                        |
-| test-rbd          | Test rbd csi driver as part of E2E (default: true)                            |
+| upgrade-version   | Target version for upgrade testing (default: "v3.5.1")                        |
+| test-rbd          | Test rbd CSI driver as part of E2E (default: true)                            |
 | cephcsi-namespace | The namespace in which cephcsi driver will be created (default: "default")    |
 | rook-namespace    | The namespace in which rook operator is installed (default: "rook-ceph")      |
 | kubeconfig        | Path to kubeconfig containing embedded authinfo (default: $HOME/.kube/config) |
@@ -106,30 +106,6 @@ are available while running tests:
 
 After the support for snapshot/clone has been added to ceph-csi,
 you need to follow these steps before running e2e.
-Please note that the snapshot operation works only if the Kubernetes version
-is greater than or equal to 1.17.0.
-
-- Delete Alpha snapshot CRD created by ceph-csi in rook.
-  - Check if you have any `v1alpha1` CRD created in our Kubernetes cluster
-
-      ```bash
-      $ kubectl get crd volumesnapshotclasses.snapshot.storage.k8s.io -o yaml |grep v1alpha1
-        - name: v1alpha1
-        - v1alpha1
-      $ kubectl get crd volumesnapshotcontents.snapshot.storage.k8s.io -o yaml |grep v1alpha1
-        - name: v1alpha1
-        - v1alpha1
-      $ kubectl get crd volumesnapshots.snapshot.storage.k8s.io -o yaml |grep v1alpha1
-        - name: v1alpha1
-        - v1alpha1
-      ```
-
-  - If you have Alpha CRD, delete it as from Kubernetes 1.17.0+ the snapshot
-    should be `v1beta1`
-
-    ```console
-    ./scripts/install-snapshot.sh delete-crd
-    ```
 
 - Install snapshot controller and Beta snapshot CRD
 

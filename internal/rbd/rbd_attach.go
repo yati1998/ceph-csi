@@ -92,10 +92,6 @@ var (
 	}
 )
 
-func init() {
-	setRbdNbdToolFeatures()
-}
-
 // rbdDeviceInfo strongly typed JSON spec for rbd device list output (of type krbd).
 type rbdDeviceInfo struct {
 	ID             string `json:"id"`
@@ -216,8 +212,9 @@ func waitForPath(ctx context.Context, pool, namespace, image string, maxRetries 
 	return "", false
 }
 
-// set features available with rbd-nbd, and NBD module loaded status.
-func setRbdNbdToolFeatures() {
+// SetRbdNbdToolFeatures sets features available with rbd-nbd, and NBD module
+// loaded status.
+func SetRbdNbdToolFeatures() {
 	var stderr string
 	// check if the module is loaded or compiled in
 	_, err := os.Stat(fmt.Sprintf("/sys/module/%s", moduleNbd))
@@ -457,8 +454,17 @@ func createPath(ctx context.Context, volOpt *rbdVolume, device string, cr *util.
 		mapArgs = append(mapArgs, "--read-only")
 	}
 
-	// Execute map
-	stdout, stderr, err := util.ExecCommand(ctx, cli, mapArgs...)
+	var (
+		stdout string
+		stderr string
+		err    error
+	)
+
+	if volOpt.NetNamespaceFilePath != "" {
+		stdout, stderr, err = util.ExecuteCommandWithNSEnter(ctx, volOpt.NetNamespaceFilePath, cli, mapArgs...)
+	} else {
+		stdout, stderr, err = util.ExecCommand(ctx, cli, mapArgs...)
+	}
 	if err != nil {
 		log.WarningLog(ctx, "rbd: map error %v, rbd output: %s", err, stderr)
 		// unmap rbd image if connection timeout

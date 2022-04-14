@@ -78,6 +78,7 @@ var (
 	rookNamespace    string
 	radosNamespace   string
 	poll             = 2 * time.Second
+	isOpenShift      bool
 )
 
 func getMons(ns string, c kubernetes.Interface) ([]string, error) {
@@ -404,7 +405,7 @@ func validateNormalUserPVCAccess(pvcPath string, f *framework.Framework) error {
 	if pvc.Spec.VolumeMode != nil {
 		isBlockMode = (*pvc.Spec.VolumeMode == v1.PersistentVolumeBlock)
 	}
-	if !isBlockMode || k8sVersionGreaterEquals(f.ClientSet, 1, 22) {
+	if (!isBlockMode || k8sVersionGreaterEquals(f.ClientSet, 1, 22)) && !isOpenShift {
 		err = getMetricsForPVC(f, pvc, deployTimeout)
 		if err != nil {
 			return err
@@ -526,7 +527,7 @@ func pvcDeleteWhenPoolNotFound(pvcPath string, cephFS bool, f *framework.Framewo
 			return err
 		}
 		// delete cephFS filesystem
-		err = deletePool("myfs", cephFS, f)
+		err = deletePool(fileSystemName, cephFS, f)
 		if err != nil {
 			return err
 		}

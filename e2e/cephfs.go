@@ -19,7 +19,6 @@ package e2e
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -69,85 +68,47 @@ func deleteCephfsPlugin() {
 }
 
 func createORDeleteCephfsResources(action kubectlAction) {
-	csiDriver, err := os.ReadFile(cephFSDirPath + csiDriverObject)
-	if err != nil {
-		// createORDeleteRbdResources is used for upgrade testing as csidriverObject is
-		// newly added, discarding file not found error.
-		if !os.IsNotExist(err) {
-			e2elog.Failf("failed to read content from %s: %v", cephFSDirPath+csiDriverObject, err)
-		}
-	} else {
-		err = retryKubectlInput(cephCSINamespace, action, string(csiDriver), deployTimeout)
+	resources := []ResourceDeployer{
+		&yamlResource{
+			filename:     cephFSDirPath + csiDriverObject,
+			allowMissing: true,
+		},
+		&yamlResource{
+			filename:     examplePath + cephConfconfigMap,
+			allowMissing: true,
+		},
+		&yamlResourceNamespaced{
+			filename:   cephFSDirPath + cephFSProvisioner,
+			namespace:  cephCSINamespace,
+			oneReplica: true,
+		},
+		&yamlResourceNamespaced{
+			filename:  cephFSDirPath + cephFSProvisionerRBAC,
+			namespace: cephCSINamespace,
+		},
+		&yamlResourceNamespaced{
+			filename:  cephFSDirPath + cephFSProvisionerPSP,
+			namespace: cephCSINamespace,
+		},
+		&yamlResourceNamespaced{
+			filename:  cephFSDirPath + cephFSNodePlugin,
+			namespace: cephCSINamespace,
+		},
+		&yamlResourceNamespaced{
+			filename:  cephFSDirPath + cephFSNodePluginRBAC,
+			namespace: cephCSINamespace,
+		},
+		&yamlResourceNamespaced{
+			filename:  cephFSDirPath + cephFSNodePluginPSP,
+			namespace: cephCSINamespace,
+		},
+	}
+
+	for _, r := range resources {
+		err := r.Do(action)
 		if err != nil {
-			e2elog.Failf("failed to %s CSIDriver object: %v", action, err)
+			e2elog.Failf("failed to %s resource: %v", action, err)
 		}
-	}
-	cephConf, err := os.ReadFile(examplePath + cephConfconfigMap)
-	if err != nil {
-		// createORDeleteCephfsResources is used for upgrade testing as cephConfConfigmap is
-		// newly added, discarding file not found error.
-		if !os.IsNotExist(err) {
-			e2elog.Failf("failed to read content from %s: %v", examplePath+cephConfconfigMap, err)
-		}
-	} else {
-		err = retryKubectlInput(cephCSINamespace, action, string(cephConf), deployTimeout)
-		if err != nil {
-			e2elog.Failf("failed to %s ceph-conf configmap object: %v", action, err)
-		}
-	}
-	data, err := replaceNamespaceInTemplate(cephFSDirPath + cephFSProvisioner)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", cephFSDirPath+cephFSProvisioner, err)
-	}
-	data = oneReplicaDeployYaml(data)
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s CephFS provisioner: %v", action, err)
-	}
-	data, err = replaceNamespaceInTemplate(cephFSDirPath + cephFSProvisionerRBAC)
-
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", cephFSDirPath+cephFSProvisionerRBAC, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s CephFS provisioner rbac: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(cephFSDirPath + cephFSProvisionerPSP)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", cephFSDirPath+cephFSProvisionerPSP, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s CephFS provisioner psp: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(cephFSDirPath + cephFSNodePlugin)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", cephFSDirPath+cephFSNodePlugin, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s CephFS nodeplugin: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(cephFSDirPath + cephFSNodePluginRBAC)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", cephFSDirPath+cephFSNodePluginRBAC, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s CephFS nodeplugin rbac: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(cephFSDirPath + cephFSNodePluginPSP)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", cephFSDirPath+cephFSNodePluginPSP, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s CephFS nodeplugin psp: %v", action, err)
 	}
 }
 
@@ -277,6 +238,10 @@ var _ = Describe("cephfs", func() {
 	})
 
 	Context("Test CephFS CSI", func() {
+		if !testCephFS || upgradeTesting {
+			return
+		}
+
 		It("Test CephFS CSI", func() {
 			pvcPath := cephFSExamplePath + "pvc.yaml"
 			appPath := cephFSExamplePath + "pod.yaml"
@@ -296,7 +261,7 @@ var _ = Describe("cephfs", func() {
 				}
 			})
 
-			By("checking nodeplugin deamonset pods are running", func() {
+			By("checking nodeplugin daemonset pods are running", func() {
 				err := waitForDaemonSets(cephFSDeamonSetName, cephCSINamespace, f.ClientSet, deployTimeout)
 				if err != nil {
 					e2elog.Failf("timeout waiting for daemonset %s: %v", cephFSDeamonSetName, err)
@@ -374,6 +339,11 @@ var _ = Describe("cephfs", func() {
 
 					err = createPVCAndvalidatePV(f.ClientSet, pvc, deployTimeout)
 					if err != nil {
+						if rwopMayFail(err) {
+							e2elog.Logf("RWOP is not supported: %v", err)
+
+							return
+						}
 						e2elog.Failf("failed to create PVC: %v", err)
 					}
 					err = createApp(f.ClientSet, app, deployTimeout)

@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -131,89 +130,49 @@ func deleteRBDPlugin() {
 }
 
 func createORDeleteRbdResources(action kubectlAction) {
-	csiDriver, err := os.ReadFile(rbdDirPath + csiDriverObject)
-	if err != nil {
-		// createORDeleteRbdResources is used for upgrade testing as csidriverObject is
-		// newly added, discarding file not found error.
-		if !os.IsNotExist(err) {
-			e2elog.Failf("failed to read content from %s: %v", rbdDirPath+csiDriverObject, err)
-		}
-	} else {
-		err = retryKubectlInput(cephCSINamespace, action, string(csiDriver), deployTimeout)
+	resources := []ResourceDeployer{
+		&yamlResource{
+			filename:     rbdDirPath + csiDriverObject,
+			allowMissing: true,
+		},
+		&yamlResource{
+			filename:     examplePath + cephConfconfigMap,
+			allowMissing: true,
+		},
+		&yamlResourceNamespaced{
+			filename:       rbdDirPath + rbdProvisioner,
+			namespace:      cephCSINamespace,
+			oneReplica:     true,
+			enableTopology: true,
+		},
+		&yamlResourceNamespaced{
+			filename:  rbdDirPath + rbdProvisionerRBAC,
+			namespace: cephCSINamespace,
+		},
+		&yamlResourceNamespaced{
+			filename:  rbdDirPath + rbdProvisionerPSP,
+			namespace: cephCSINamespace,
+		},
+		&yamlResourceNamespaced{
+			filename:    rbdDirPath + rbdNodePlugin,
+			namespace:   cephCSINamespace,
+			domainLabel: nodeRegionLabel + "," + nodeZoneLabel,
+		},
+		&yamlResourceNamespaced{
+			filename:  rbdDirPath + rbdNodePluginRBAC,
+			namespace: cephCSINamespace,
+		},
+		&yamlResourceNamespaced{
+			filename:  rbdDirPath + rbdNodePluginPSP,
+			namespace: cephCSINamespace,
+		},
+	}
+
+	for _, r := range resources {
+		err := r.Do(action)
 		if err != nil {
-			e2elog.Failf("failed to %s CSIDriver object: %v", action, err)
+			e2elog.Failf("failed to %s resource: %v", action, err)
 		}
-	}
-	cephConf, err := os.ReadFile(examplePath + cephConfconfigMap)
-	if err != nil {
-		// createORDeleteRbdResources is used for upgrade testing as cephConf Configmap is
-		// newly added, discarding file not found error.
-		if !os.IsNotExist(err) {
-			e2elog.Failf("failed to read content from %s: %v", examplePath+cephConfconfigMap, err)
-		}
-	} else {
-		err = retryKubectlInput(cephCSINamespace, action, string(cephConf), deployTimeout)
-		if err != nil {
-			e2elog.Failf("failed to %s ceph-conf configmap object: %v", action, err)
-		}
-	}
-	data, err := replaceNamespaceInTemplate(rbdDirPath + rbdProvisioner)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", rbdDirPath+rbdProvisioner, err)
-	}
-	data = oneReplicaDeployYaml(data)
-	data = enableTopologyInTemplate(data)
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s rbd provisioner: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(rbdDirPath + rbdProvisionerRBAC)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", rbdDirPath+rbdProvisionerRBAC, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s provisioner rbac: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(rbdDirPath + rbdProvisionerPSP)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", rbdDirPath+rbdProvisionerPSP, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s provisioner psp: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(rbdDirPath + rbdNodePlugin)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", rbdDirPath+rbdNodePlugin, err)
-	}
-
-	domainLabel := nodeRegionLabel + "," + nodeZoneLabel
-	data = addTopologyDomainsToDSYaml(data, domainLabel)
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s nodeplugin: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(rbdDirPath + rbdNodePluginRBAC)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", rbdDirPath+rbdNodePluginRBAC, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s nodeplugin rbac: %v", action, err)
-	}
-
-	data, err = replaceNamespaceInTemplate(rbdDirPath + rbdNodePluginPSP)
-	if err != nil {
-		e2elog.Failf("failed to read content from %s: %v", rbdDirPath+rbdNodePluginPSP, err)
-	}
-	err = retryKubectlInput(cephCSINamespace, action, data, deployTimeout)
-	if err != nil {
-		e2elog.Failf("failed to %s nodeplugin psp: %v", action, err)
 	}
 }
 
@@ -380,6 +339,10 @@ var _ = Describe("RBD", func() {
 	})
 
 	Context("Test RBD CSI", func() {
+		if !testRBD || upgradeTesting {
+			return
+		}
+
 		It("Test RBD CSI", func() {
 			// test only if ceph-csi is deployed via helm
 			if helmTest {
@@ -831,6 +794,11 @@ var _ = Describe("RBD", func() {
 					baseAppName := app.Name
 					err = createPVCAndvalidatePV(f.ClientSet, pvc, deployTimeout)
 					if err != nil {
+						if rwopMayFail(err) {
+							e2elog.Logf("RWOP is not supported: %v", err)
+
+							return
+						}
 						e2elog.Failf("failed to create PVC: %v", err)
 					}
 					// validate created backend rbd images
@@ -865,6 +833,11 @@ var _ = Describe("RBD", func() {
 					baseAppName := app.Name
 					err = createPVCAndvalidatePV(f.ClientSet, pvc, deployTimeout)
 					if err != nil {
+						if rwopMayFail(err) {
+							e2elog.Logf("RWOP is not supported: %v", err)
+
+							return
+						}
 						e2elog.Failf("failed to create PVC: %v", err)
 					}
 					// validate created backend rbd images

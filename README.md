@@ -4,6 +4,7 @@
 [![Go Report
 Card](https://goreportcard.com/badge/github.com/ceph/ceph-csi)](https://goreportcard.com/report/github.com/ceph/ceph-csi)
 [![TODOs](https://badgen.net/https/api.tickgit.com/badgen/github.com/ceph/ceph-csi/devel)](https://www.tickgit.com/browse?repo=github.com/ceph/ceph-csi&branch=devel)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/5940/badge)](https://bestpractices.coreinfrastructure.org/projects/5940)
 
 - [Ceph CSI](#ceph-csi)
   - [Overview](#overview)
@@ -54,6 +55,7 @@ environments.
 
 | Ceph CSI Version | Container Orchestrator Name | Version Tested|
 | -----------------| --------------------------- | --------------|
+| v3.6.1 | Kubernetes | v1.21, v1.22, v1.23|
 | v3.6.0 | Kubernetes | v1.21, v1.22, v1.23|
 | v3.5.1 | Kubernetes | v1.21, v1.22, v1.23|
 | v3.5.0 | Kubernetes | v1.21, v1.22, v1.23|
@@ -125,6 +127,7 @@ in the Kubernetes documentation.
 | Ceph CSI Release/Branch | Container image name         | Image Tag |
 | ----------------------- | ---------------------------- | --------- |
 | devel (Branch)          | quay.io/cephcsi/cephcsi      | canary    |
+| v3.6.1 (Release)        | quay.io/cephcsi/cephcsi      | v3.6.1    |
 | v3.6.0 (Release)        | quay.io/cephcsi/cephcsi      | v3.6.0    |
 | v3.5.1 (Release)        | quay.io/cephcsi/cephcsi      | v3.5.1    |
 | v3.5.0 (Release)        | quay.io/cephcsi/cephcsi      | v3.5.0    |
@@ -175,14 +178,14 @@ A regular dev standup takes place every [Monday,Tuesday and Thursday at
 timezone by executing command `date -d "12:00 UTC"` on terminal
 
 Any changes to the meeting schedule will be added to the [agenda
-doc](https://docs.google.com/document/d/1K1aerdMpraIh56-skdoEoVF9RZrO4NUcbHtjN-f3u1s).
+doc](https://hackmd.io/6GL90WFGQL-L4DcIfIAKeQ).
 
 Anyone who wants to discuss the direction of the project, design and
 implementation reviews, or general questions with the broader community is
 welcome and encouraged to join.
 
 - Meeting link: <https://meet.google.com/nnn-txfp-cge>
-- [Current agenda](https://docs.google.com/document/d/1K1aerdMpraIh56-skdoEoVF9RZrO4NUcbHtjN-f3u1s)
+- [Current agenda](https://hackmd.io/6GL90WFGQL-L4DcIfIAKeQ)
 
 ## Contact
 

@@ -90,12 +90,12 @@ compatibility support and without prior notice.
 **Also, we do not recommend any direct upgrades to 3.6 except from 3.5 to 3.6.**
 For example, upgrading from 3.4 to 3.6 is not recommended.
 
-git checkout v3.6.0 tag
+git checkout v3.6.1 tag
 
 ```bash
 git clone https://github.com/ceph/ceph-csi.git
 cd ./ceph-csi
-git checkout v3.6.0
+git checkout v3.6.1
 ```
 
 ```console
@@ -155,9 +155,6 @@ nodeplugin daemonset
 ```bash
 $ kubectl apply -f deploy/cephfs/kubernetes/csi-nodeplugin-rbac.yaml
 serviceaccount/cephfs-csi-nodeplugin configured
-clusterrole.rbac.authorization.k8s.io/cephfs-csi-nodeplugin configured
-clusterrole.rbac.authorization.k8s.io/cephfs-csi-nodeplugin-rules configured
-clusterrolebinding.rbac.authorization.k8s.io/cephfs-csi-nodeplugin configured
 ```
 
 If you determined in [Pre-upgrade considerations](#pre-upgrade-considerations)

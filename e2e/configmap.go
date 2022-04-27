@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/ceph/ceph-csi/internal/util"
 
@@ -45,24 +44,25 @@ func createConfigMap(pluginPath string, c kubernetes.Interface, f *framework.Fra
 		return err
 	}
 
-	fsID, stdErr, err := execCommandInToolBoxPod(f, "ceph fsid", rookNamespace)
+	fsID, err := getClusterID(f)
 	if err != nil {
-		return fmt.Errorf("failed to exec command in toolbox: %w", err)
+		return fmt.Errorf("failed to get clusterID: %w", err)
 	}
-	if stdErr != "" {
-		return fmt.Errorf("error getting fsid %v", stdErr)
-	}
-	// remove new line present in fsID
-	fsID = strings.Trim(fsID, "\n")
+
 	// get mon list
 	mons, err := getMons(rookNamespace, c)
 	if err != nil {
 		return err
 	}
 	conmap := []util.ClusterInfo{{
-		ClusterID:      fsID,
-		Monitors:       mons,
-		RadosNamespace: radosNamespace,
+		ClusterID: fsID,
+		Monitors:  mons,
+		RBD: struct {
+			NetNamespaceFilePath string `json:"netNamespaceFilePath"`
+			RadosNamespace       string `json:"radosNamespace"`
+		}{
+			RadosNamespace: radosNamespace,
+		},
 	}}
 	if upgradeTesting {
 		subvolumegroup = "csi"
@@ -132,7 +132,7 @@ func createCustomConfigMap(
 			case "radosNamespace":
 				for c := range conmap {
 					if conmap[c].ClusterID == cluster {
-						conmap[c].RadosNamespace = j
+						conmap[c].RBD.RadosNamespace = j
 					}
 				}
 			}

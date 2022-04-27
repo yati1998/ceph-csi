@@ -41,35 +41,43 @@ type ClusterInfo struct {
 	// ClusterID is used for unique identification
 	ClusterID string `json:"clusterID"`
 	// RadosNamespace is a rados namespace in the pool
-	RadosNamespace string `json:"radosNamespace"`
+	RadosNamespace string `json:"radosNamespace"` // For backward compatibility. TODO: Remove this in 3.7.0
 	// Monitors is monitor list for corresponding cluster ID
 	Monitors []string `json:"monitors"`
 	// CephFS contains CephFS specific options
 	CephFS struct {
+		// symlink filepath for the network namespace where we need to execute commands.
+		NetNamespaceFilePath string `json:"netNamespaceFilePath"`
 		// SubvolumeGroup contains the name of the SubvolumeGroup for CSI volumes
 		SubvolumeGroup string `json:"subvolumeGroup"`
 	} `json:"cephFS"`
-	// symlink filepath for the network namespace where we need to execute commands.
-	NetNamespaceFilePath string `json:"netNamespaceFilePath"`
+
+	// RBD Contains RBD specific options
+	RBD struct {
+		// symlink filepath for the network namespace where we need to execute commands.
+		NetNamespaceFilePath string `json:"netNamespaceFilePath"`
+		// RadosNamespace is a rados namespace in the pool
+		RadosNamespace string `json:"radosNamespace"`
+	} `json:"rbd"`
 }
 
 // Expected JSON structure in the passed in config file is,
-// [
-// 	{
-// 		"clusterID": "<cluster-id>",
-//		"radosNamespace": "<rados-namespace>",
-// 		"monitors":
-// 			[
-// 				"<monitor-value>",
-// 				"<monitor-value>",
-// 				...
-// 			],
-//         "cephFS": {
-//           "subvolumeGroup": "<subvolumegroup for cephfs volumes>"
-//         }
-// 	},
-// 	...
-// ].
+// nolint:godot // example json content should not contain unwanted dot.
+/*
+[{
+	"clusterID": "<cluster-id>",
+	"rbd": {
+		"radosNamespace": "<rados-namespace>"
+	},
+	"monitors": [
+		"<monitor-value>",
+		"<monitor-value>"
+	],
+	"cephFS": {
+		"subvolumeGroup": "<subvolumegroup for cephfs volumes>"
+	}
+}]
+*/
 func readClusterInfo(pathToConfig, clusterID string) (*ClusterInfo, error) {
 	var config []ClusterInfo
 
@@ -115,6 +123,10 @@ func GetRadosNamespace(pathToConfig, clusterID string) (string, error) {
 	cluster, err := readClusterInfo(pathToConfig, clusterID)
 	if err != nil {
 		return "", err
+	}
+
+	if cluster.RBD.RadosNamespace != "" {
+		return cluster.RBD.RadosNamespace, nil
 	}
 
 	return cluster.RadosNamespace, nil
@@ -164,11 +176,21 @@ func GetClusterID(options map[string]string) (string, error) {
 	return clusterID, nil
 }
 
-func GetNetNamespaceFilePath(pathToConfig, clusterID string) (string, error) {
+func GetRBDNetNamespaceFilePath(pathToConfig, clusterID string) (string, error) {
 	cluster, err := readClusterInfo(pathToConfig, clusterID)
 	if err != nil {
 		return "", err
 	}
 
-	return cluster.NetNamespaceFilePath, nil
+	return cluster.RBD.NetNamespaceFilePath, nil
+}
+
+// GetCephFSNetNamespaceFilePath returns the netNamespaceFilePath for CephFS volumes.
+func GetCephFSNetNamespaceFilePath(pathToConfig, clusterID string) (string, error) {
+	cluster, err := readClusterInfo(pathToConfig, clusterID)
+	if err != nil {
+		return "", err
+	}
+
+	return cluster.CephFS.NetNamespaceFilePath, nil
 }

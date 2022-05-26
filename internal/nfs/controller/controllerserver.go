@@ -46,6 +46,7 @@ type Server struct {
 func NewControllerServer(d *csicommon.CSIDriver) *Server {
 	// global instance of the volume journal, yuck
 	store.VolJournal = journal.NewCSIVolumeJournalWithNamespace(cephfs.CSIInstanceID, fsutil.RadosNamespace)
+	store.SnapJournal = journal.NewCSISnapshotJournalWithNamespace(cephfs.CSIInstanceID, fsutil.RadosNamespace)
 
 	return &Server{
 		backendServer: cephfs.NewControllerServer(d),
@@ -149,4 +150,29 @@ func (cs *Server) DeleteVolume(
 	log.DebugLog(ctx, "deleted NFS-export: %s", nfsVolume)
 
 	return cs.backendServer.DeleteVolume(ctx, req)
+}
+
+// ControllerExpandVolume calls the backend (CephFS) procedure to expand the
+// volume. There is no interaction with the NFS-server needed to publish the
+// new size.
+func (cs *Server) ControllerExpandVolume(
+	ctx context.Context,
+	req *csi.ControllerExpandVolumeRequest) (*csi.ControllerExpandVolumeResponse, error) {
+	return cs.backendServer.ControllerExpandVolume(ctx, req)
+}
+
+// CreateSnapshot calls the backend (CephFS) procedure to create snapshot.
+// There is no interaction with the NFS-server needed for snapshot creation.
+func (cs *Server) CreateSnapshot(
+	ctx context.Context,
+	req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
+	return cs.backendServer.CreateSnapshot(ctx, req)
+}
+
+// DeleteSnapshot calls the backend (CephFS) procedure to delete snapshot.
+// There is no interaction with the NFS-server needed for snapshot creation.
+func (cs *Server) DeleteSnapshot(
+	ctx context.Context,
+	req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
+	return cs.backendServer.DeleteSnapshot(ctx, req)
 }

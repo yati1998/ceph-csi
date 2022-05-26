@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/ceph/ceph-csi/internal/util"
-	"github.com/ceph/ceph-csi/internal/util/k8s"
 	"github.com/ceph/ceph-csi/internal/util/log"
 
 	"github.com/ceph/go-ceph/rados"
@@ -193,28 +192,83 @@ type migrationVolID struct {
 	clusterID string
 }
 
-var supportedFeatures = map[string]imageFeature{
-	librbd.FeatureNameLayering: {
-		needRbdNbd: false,
-	},
-	librbd.FeatureNameExclusiveLock: {
-		needRbdNbd: false,
-	},
-	librbd.FeatureNameObjectMap: {
-		needRbdNbd: false,
-		dependsOn:  []string{librbd.FeatureNameExclusiveLock},
-	},
-	librbd.FeatureNameFastDiff: {
-		needRbdNbd: false,
-		dependsOn:  []string{librbd.FeatureNameObjectMap},
-	},
-	librbd.FeatureNameJournaling: {
-		needRbdNbd: true,
-		dependsOn:  []string{librbd.FeatureNameExclusiveLock},
-	},
-	librbd.FeatureNameDeepFlatten: {
-		needRbdNbd: false,
-	},
+var (
+	supportedFeatures = map[string]imageFeature{
+		librbd.FeatureNameLayering: {
+			needRbdNbd: false,
+		},
+		librbd.FeatureNameExclusiveLock: {
+			needRbdNbd: false,
+		},
+		librbd.FeatureNameObjectMap: {
+			needRbdNbd: false,
+			dependsOn:  []string{librbd.FeatureNameExclusiveLock},
+		},
+		librbd.FeatureNameFastDiff: {
+			needRbdNbd: false,
+			dependsOn:  []string{librbd.FeatureNameObjectMap},
+		},
+		librbd.FeatureNameJournaling: {
+			needRbdNbd: true,
+			dependsOn:  []string{librbd.FeatureNameExclusiveLock},
+		},
+		librbd.FeatureNameDeepFlatten: {
+			needRbdNbd: false,
+		},
+	}
+
+	krbdLayeringSupport = []util.KernelVersion{
+		{
+			Version:    3,
+			PatchLevel: 8,
+			SubLevel:   0,
+		},
+	}
+	krbdStripingV2Support = []util.KernelVersion{
+		{
+			Version:    3,
+			PatchLevel: 10,
+			SubLevel:   0,
+		},
+	}
+	krbdExclusiveLockSupport = []util.KernelVersion{
+		{
+			Version:    4,
+			PatchLevel: 9,
+			SubLevel:   0,
+		},
+	}
+	krbdDataPoolSupport = []util.KernelVersion{
+		{
+			Version:    4,
+			PatchLevel: 11,
+			SubLevel:   0,
+		},
+	}
+)
+
+// prepareKrbdFeatureAttrs prepare krbd fearure set based on kernel version.
+// Minimum kernel version should be 3.8, else it will return error.
+func prepareKrbdFeatureAttrs() (uint64, error) {
+	// fetch the current running kernel info
+	release, err := util.GetKernelVersion()
+	if err != nil {
+		return 0, fmt.Errorf("fetching current kernel version failed: %w", err)
+	}
+
+	switch {
+	case util.CheckKernelSupport(release, krbdDataPoolSupport):
+		return librbd.FeatureDataPool, nil
+	case util.CheckKernelSupport(release, krbdExclusiveLockSupport):
+		return librbd.FeatureExclusiveLock, nil
+	case util.CheckKernelSupport(release, krbdStripingV2Support):
+		return librbd.FeatureStripingV2, nil
+	case util.CheckKernelSupport(release, krbdLayeringSupport):
+		return librbd.FeatureLayering, nil
+	}
+	log.ErrorLogMsg("kernel version is too old: %q", release)
+
+	return 0, os.ErrNotExist
 }
 
 // GetKrbdSupportedFeatures load the module if needed and return supported
@@ -239,9 +293,19 @@ func GetKrbdSupportedFeatures() (string, error) {
 	}
 	val, err := os.ReadFile(krbdSupportedFeaturesFile)
 	if err != nil {
-		log.ErrorLogMsg("reading file %q failed: %v", krbdSupportedFeaturesFile, err)
+		if !errors.Is(err, os.ErrNotExist) {
+			log.ErrorLogMsg("reading file %q failed: %v", krbdSupportedFeaturesFile, err)
 
-		return "", err
+			return "", err
+		}
+		attrs, err := prepareKrbdFeatureAttrs()
+		if err != nil {
+			log.ErrorLogMsg("preparing krbd feature attributes failed, %v", err)
+
+			return "", err
+		}
+
+		return strconv.FormatUint(attrs, 16), nil
 	}
 
 	return strings.TrimSuffix(string(val), "\n"), nil
@@ -264,7 +328,12 @@ func HexStringToInteger(hexString string) (uint, error) {
 
 // isKrbdFeatureSupported checks if a given Image Feature is supported by krbd
 // driver or not.
-func isKrbdFeatureSupported(ctx context.Context, imageFeatures string) bool {
+func isKrbdFeatureSupported(ctx context.Context, imageFeatures string) (bool, error) {
+	// return false when /sys/bus/rbd/supported_features is absent and we are
+	// not in a position to prepare krbd feature attributes, i.e. if kernel <= 3.8
+	if krbdFeatures == 0 {
+		return false, os.ErrNotExist
+	}
 	arr := strings.Split(imageFeatures, ",")
 	log.UsefulLog(ctx, "checking for ImageFeatures: %v", arr)
 	imageFeatureSet := librbd.FeatureSetFromNames(arr)
@@ -279,7 +348,7 @@ func isKrbdFeatureSupported(ctx context.Context, imageFeatures string) bool {
 		}
 	}
 
-	return supported
+	return supported, nil
 }
 
 // Connect an rbdVolume to the Ceph cluster.
@@ -1366,15 +1435,6 @@ func (rv *rbdVolume) cloneRbdImageFromSnapshot(
 		}
 	}()
 
-	if pSnapOpts.isEncrypted() {
-		pSnapOpts.conn = rv.conn.Copy()
-
-		err = pSnapOpts.copyEncryptionConfig(&rv.rbdImage, true)
-		if err != nil {
-			return fmt.Errorf("failed to clone encryption config: %w", err)
-		}
-	}
-
 	// get image latest information
 	err = rv.getImageInfo()
 	if err != nil {
@@ -1922,9 +1982,9 @@ func genVolFromVolIDWithMigration(
 	return rv, err
 }
 
-// setVolumeMetadata set PV/PVC/PVCNamespace metadata on RBD image.
-func (rv *rbdVolume) setVolumeMetadata(parameters map[string]string) error {
-	for k, v := range k8s.GetVolumeMetadata(parameters) {
+// setAllMetadata set all the metadata from arg parameters on RBD image.
+func (rv *rbdVolume) setAllMetadata(parameters map[string]string) error {
+	for k, v := range parameters {
 		err := rv.SetMetadata(k, v)
 		if err != nil {
 			return fmt.Errorf("failed to set metadata key %q, value %q on image: %w", k, v, err)
@@ -1934,13 +1994,13 @@ func (rv *rbdVolume) setVolumeMetadata(parameters map[string]string) error {
 	return nil
 }
 
-// setSnapshotMetadata Set snapshot-name/snapshot-namespace/snapshotcontent-name metadata
-// on RBD image.
-func (rv *rbdVolume) setSnapshotMetadata(parameters map[string]string) error {
-	for k, v := range k8s.GetSnapshotMetadata(parameters) {
-		err := rv.SetMetadata(k, v)
-		if err != nil {
-			return fmt.Errorf("failed to set metadata key %q, value %q on image: %w", k, v, err)
+// unsetAllMetadata unset all the metadata from arg keys on RBD image.
+func (rv *rbdVolume) unsetAllMetadata(keys []string) error {
+	for _, key := range keys {
+		err := rv.RemoveMetadata(key)
+		// TODO: replace string comparison with errno.
+		if err != nil && !strings.Contains(err.Error(), "No such file or directory") {
+			return fmt.Errorf("failed to unset metadata key %q on %q: %w", key, rv, err)
 		}
 	}
 

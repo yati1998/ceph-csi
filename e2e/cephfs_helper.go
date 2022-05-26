@@ -99,7 +99,6 @@ func createCephfsStorageClass(
 		}
 		sc.Parameters["clusterID"] = fsID
 	}
-	sc.Namespace = cephCSINamespace
 
 	timeout := time.Duration(deployTimeout) * time.Minute
 
@@ -145,9 +144,7 @@ func unmountCephFSVolume(f *framework.Framework, appName, pvcName string) error 
 
 		return fmt.Errorf("failed to get pod: %w", err)
 	}
-	pvc, err := f.ClientSet.CoreV1().
-		PersistentVolumeClaims(f.UniqueName).
-		Get(context.TODO(), pvcName, metav1.GetOptions{})
+	pvc, err := getPersistentVolumeClaim(f.ClientSet, f.UniqueName, pvcName)
 	if err != nil {
 		e2elog.Logf("Error occurred getting PVC %s in namespace %s", pvcName, f.UniqueName)
 
@@ -157,7 +154,7 @@ func unmountCephFSVolume(f *framework.Framework, appName, pvcName string) error 
 		"umount /var/lib/kubelet/pods/%s/volumes/kubernetes.io~csi/%s/mount",
 		pod.UID,
 		pvc.Spec.VolumeName)
-	_, stdErr, err := execCommandInDaemonsetPod(
+	stdErr, err := execCommandInDaemonsetPod(
 		f,
 		cmd,
 		cephFSDeamonSetName,

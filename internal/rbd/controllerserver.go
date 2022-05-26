@@ -19,6 +19,7 @@ package rbd
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	csicommon "github.com/ceph/ceph-csi/internal/csi-common"
 	"github.com/ceph/ceph-csi/internal/util"
@@ -330,7 +331,8 @@ func (cs *ControllerServer) CreateVolume(
 	}
 
 	// Set Metadata on PV Create
-	err = rbdVol.setVolumeMetadata(req.GetParameters())
+	metadata := k8s.GetVolumeMetadata(req.GetParameters())
+	err = rbdVol.setAllMetadata(metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +455,8 @@ func (cs *ControllerServer) repairExistingVolume(ctx context.Context, req *csi.C
 	}
 
 	// Set metadata on restart of provisioner pod when image exist
-	err := rbdVol.setVolumeMetadata(req.GetParameters())
+	metadata := k8s.GetVolumeMetadata(req.GetParameters())
+	err := rbdVol.setAllMetadata(metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -588,8 +591,19 @@ func (cs *ControllerServer) createVolumeFromSnapshot(
 
 		return err
 	}
+	err = rbdVol.unsetAllMetadata(k8s.GetSnapshotMetadataKeys())
+	if err != nil {
+		log.ErrorLog(ctx, "failed to unset snapshot metadata on rbd image %q: %v", rbdVol, err)
+
+		return err
+	}
 
 	log.DebugLog(ctx, "create volume %s from snapshot %s", rbdVol, rbdSnap)
+
+	err = parentVol.copyEncryptionConfig(&rbdVol.rbdImage, true)
+	if err != nil {
+		return fmt.Errorf("failed to copy encryption config for %q: %w", rbdVol, err)
+	}
 
 	// resize the volume if the size is different
 	// expand the image if the requested size is greater than the current size
@@ -963,7 +977,7 @@ func (cs *ControllerServer) ValidateVolumeCapabilities(
 }
 
 // CreateSnapshot creates the snapshot in backend and stores metadata in store.
-// nolint:cyclop // TODO: reduce complexity
+// nolint:gocyclo,cyclop // TODO: reduce complexity.
 func (cs *ControllerServer) CreateSnapshot(
 	ctx context.Context,
 	req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
@@ -1066,9 +1080,14 @@ func (cs *ControllerServer) CreateSnapshot(
 	// Update the metadata on snapshot not on the original image
 	rbdVol.RbdImageName = rbdSnap.RbdSnapName
 
+	err = rbdVol.unsetAllMetadata(k8s.GetVolumeMetadataKeys())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 	// Set snapshot-name/snapshot-namespace/snapshotcontent-name details
 	// on RBD backend image as metadata on create
-	err = rbdVol.setSnapshotMetadata(req.GetParameters())
+	metadata := k8s.GetSnapshotMetadata(req.GetParameters())
+	err = rbdVol.setAllMetadata(metadata)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -1104,11 +1123,9 @@ func cloneFromSnapshot(
 	}
 	defer vol.Destroy()
 
-	if rbdVol.isEncrypted() {
-		err = rbdVol.copyEncryptionConfig(&vol.rbdImage, false)
-		if err != nil {
-			return nil, status.Error(codes.Internal, err.Error())
-		}
+	err = rbdVol.copyEncryptionConfig(&vol.rbdImage, false)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	err = vol.flattenRbdImage(ctx, false, rbdHardMaxCloneDepth, rbdSoftMaxCloneDepth)
@@ -1127,7 +1144,8 @@ func cloneFromSnapshot(
 	// Update snapshot-name/snapshot-namespace/snapshotcontent-name details on
 	// RBD backend image as metadata on restart of provisioner pod when image exist
 	if len(parameters) != 0 {
-		err = rbdVol.setSnapshotMetadata(parameters)
+		metadata := k8s.GetSnapshotMetadata(parameters)
+		err = rbdVol.setAllMetadata(metadata)
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
@@ -1207,14 +1225,12 @@ func (cs *ControllerServer) doSnapshotClone(
 		}
 	}()
 
-	if parentVol.isEncrypted() {
-		cryptErr := parentVol.copyEncryptionConfig(&cloneRbd.rbdImage, false)
-		if cryptErr != nil {
-			log.WarningLog(ctx, "failed copy encryption "+
-				"config for %q: %v", cloneRbd, cryptErr)
+	err = parentVol.copyEncryptionConfig(&cloneRbd.rbdImage, false)
+	if err != nil {
+		log.ErrorLog(ctx, "failed to copy encryption "+
+			"config for %q: %v", cloneRbd, err)
 
-			return nil, err
-		}
+		return nil, err
 	}
 
 	err = cloneRbd.createSnapshot(ctx, rbdSnap)

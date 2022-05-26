@@ -324,8 +324,8 @@ func (rv *rbdVolume) Exists(ctx context.Context, parentVol *rbdVolume) (bool, er
 		return false, err
 	}
 
-	if parentVol != nil && parentVol.isEncrypted() {
-		err = parentVol.copyEncryptionConfig(&rv.rbdImage, false)
+	if parentVol != nil {
+		err = parentVol.copyEncryptionConfig(&rv.rbdImage, true)
 		if err != nil {
 			log.ErrorLog(ctx, err.Error())
 
@@ -617,7 +617,7 @@ func RegenerateJournal(
 		}
 		// Update Metadata on reattach of the same old PV
 		parameters := k8s.PrepareVolumeMetadata(claimName, rbdVol.Owner, "")
-		err = rbdVol.setVolumeMetadata(parameters)
+		err = rbdVol.setAllMetadata(parameters)
 		if err != nil {
 			return "", fmt.Errorf("failed to set volume metadata: %w", err)
 		}

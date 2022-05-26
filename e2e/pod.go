@@ -91,13 +91,31 @@ func waitForDaemonSets(name, ns string, c kubernetes.Interface, t int) error {
 }
 
 func findPodAndContainerName(f *framework.Framework, ns, cn string, opt *metav1.ListOptions) (string, string, error) {
-	podList, err := f.PodClientNS(ns).List(context.TODO(), *opt)
-	if err != nil {
-		return "", "", err
-	}
+	timeout := time.Duration(deployTimeout) * time.Minute
 
-	if len(podList.Items) == 0 {
-		return "", "", errors.New("podlist is empty")
+	var (
+		podList *v1.PodList
+		listErr error
+	)
+	err := wait.PollImmediate(poll, timeout, func() (bool, error) {
+		podList, listErr = f.PodClientNS(ns).List(context.TODO(), *opt)
+		if listErr != nil {
+			if isRetryableAPIError(listErr) {
+				return false, nil
+			}
+
+			return false, fmt.Errorf("failed to list Pods: %w", listErr)
+		}
+
+		if len(podList.Items) == 0 {
+			// retry in case the pods have not been (re)started yet
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("failed to find pod for %v: %w", opt, err)
 	}
 
 	if cn != "" {
@@ -137,13 +155,16 @@ func getCommandInPodOpts(
 	}, nil
 }
 
-// execCommandInDaemonsetPod executes commands inside given container of a daemonset pod on a particular node.
+// execCommandInDaemonsetPod executes commands inside given container of a
+// daemonset pod on a particular node.
+//
+// stderr is returned as a string, and err will be set on a failure.
 func execCommandInDaemonsetPod(
 	f *framework.Framework,
-	c, daemonsetName, nodeName, containerName, ns string) (string, string, error) {
+	c, daemonsetName, nodeName, containerName, ns string) (string, error) {
 	selector, err := getDaemonSetLabelSelector(f, ns, daemonsetName)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	opt := &metav1.ListOptions{
@@ -151,7 +172,7 @@ func execCommandInDaemonsetPod(
 	}
 	pods, err := listPods(f, ns, opt)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	podName := ""
@@ -161,7 +182,7 @@ func execCommandInDaemonsetPod(
 		}
 	}
 	if podName == "" {
-		return "", "", fmt.Errorf("%s daemonset pod on node %s in namespace %s not found", daemonsetName, nodeName, ns)
+		return "", fmt.Errorf("%s daemonset pod on node %s in namespace %s not found", daemonsetName, nodeName, ns)
 	}
 
 	cmd := []string{"/bin/sh", "-c", c}
@@ -174,7 +195,9 @@ func execCommandInDaemonsetPod(
 		CaptureStderr: true,
 	}
 
-	return f.ExecWithOptions(podOpt)
+	_ /* stdout */, stderr, err := f.ExecWithOptions(podOpt)
+
+	return stderr, err
 }
 
 // listPods returns slice of pods matching given ListOptions and namespace.

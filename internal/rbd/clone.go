@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ceph/ceph-csi/internal/util/k8s"
 	"github.com/ceph/ceph-csi/internal/util/log"
 
 	librbd "github.com/ceph/go-ceph/rbd"
@@ -144,11 +145,9 @@ func (rv *rbdVolume) createCloneFromImage(ctx context.Context, parentVol *rbdVol
 		return err
 	}
 
-	if parentVol.isEncrypted() {
-		err = parentVol.copyEncryptionConfig(&rv.rbdImage, false)
-		if err != nil {
-			return fmt.Errorf("failed to copy encryption config for %q: %w", rv, err)
-		}
+	err = parentVol.copyEncryptionConfig(&rv.rbdImage, true)
+	if err != nil {
+		return fmt.Errorf("failed to copy encryption config for %q: %w", rv, err)
 	}
 
 	err = j.StoreImageID(ctx, rv.JournalPool, rv.ReservedID, rv.ImageID)
@@ -208,12 +207,24 @@ func (rv *rbdVolume) doSnapClone(ctx context.Context, parentVol *rbdVolume) erro
 		}
 	}()
 
+	err = tempClone.unsetAllMetadata(k8s.GetVolumeMetadataKeys())
+	if err != nil {
+		log.ErrorLog(ctx, "failed to unset volume metadata on temp clone image %q: %v", tempClone, err)
+
+		return err
+	}
+
 	// create snap of temp clone from temporary cloned image
 	// create final clone
 	// delete snap of temp clone
 	errClone = createRBDClone(ctx, tempClone, rv, cloneSnap)
 	if errClone != nil {
 		return errClone
+	}
+
+	err = parentVol.copyEncryptionConfig(&rv.rbdImage, true)
+	if err != nil {
+		return fmt.Errorf("failed to copy encryption config for %q: %w", rv, err)
 	}
 
 	return nil

@@ -206,6 +206,71 @@ func createCephFSSnapshotClass(f *framework.Framework) error {
 	return err
 }
 
+func createNFSSnapshotClass(f *framework.Framework) error {
+	scPath := fmt.Sprintf("%s/%s", nfsExamplePath, "snapshotclass.yaml")
+	sc := getSnapshotClass(scPath)
+	sc.Parameters["csi.storage.k8s.io/snapshotter-secret-namespace"] = cephCSINamespace
+	sc.Parameters["csi.storage.k8s.io/snapshotter-secret-name"] = cephFSProvisionerSecretName
+
+	fsID, err := getClusterID(f)
+	if err != nil {
+		return fmt.Errorf("failed to get clusterID: %w", err)
+	}
+	sc.Parameters["clusterID"] = fsID
+	sclient, err := newSnapshotClient()
+	if err != nil {
+		return err
+	}
+
+	timeout := time.Duration(deployTimeout) * time.Minute
+
+	return wait.PollImmediate(poll, timeout, func() (bool, error) {
+		_, err = sclient.VolumeSnapshotClasses().Create(context.TODO(), &sc, metav1.CreateOptions{})
+		if err != nil {
+			e2elog.Logf("error creating SnapshotClass %q: %v", sc.Name, err)
+			if apierrs.IsAlreadyExists(err) {
+				return true, nil
+			}
+			if isRetryableAPIError(err) {
+				return false, nil
+			}
+
+			return false, fmt.Errorf("failed to create SnapshotClass %q: %w", sc.Name, err)
+		}
+
+		return true, nil
+	})
+}
+
+func deleteNFSSnapshotClass() error {
+	scPath := fmt.Sprintf("%s/%s", nfsExamplePath, "snapshotclass.yaml")
+	sc := getSnapshotClass(scPath)
+
+	sclient, err := newSnapshotClient()
+	if err != nil {
+		return err
+	}
+
+	timeout := time.Duration(deployTimeout) * time.Minute
+
+	return wait.PollImmediate(poll, timeout, func() (bool, error) {
+		err = sclient.VolumeSnapshotClasses().Delete(context.TODO(), sc.Name, metav1.DeleteOptions{})
+		if err != nil {
+			e2elog.Logf("error deleting SnapshotClass %q: %v", sc.Name, err)
+			if apierrs.IsNotFound(err) {
+				return true, nil
+			}
+			if isRetryableAPIError(err) {
+				return false, nil
+			}
+
+			return false, fmt.Errorf("failed to delete SnapshotClass %q: %w", sc.Name, err)
+		}
+
+		return true, nil
+	})
+}
+
 func getVolumeSnapshotContent(namespace, snapshotName string) (*snapapi.VolumeSnapshotContent, error) {
 	sclient, err := newSnapshotClient()
 	if err != nil {
@@ -229,6 +294,7 @@ func getVolumeSnapshotContent(namespace, snapshotName string) (*snapapi.VolumeSn
 	return volumeSnapshotContent, nil
 }
 
+// nolint:gocyclo,cyclop // reduce complexity
 func validateBiggerPVCFromSnapshot(f *framework.Framework,
 	pvcPath,
 	appPath,
@@ -304,6 +370,43 @@ func validateBiggerPVCFromSnapshot(f *framework.Framework,
 		err = checkDeviceSize(appClone, f, &opt, newSize)
 		if err != nil {
 			return fmt.Errorf("failed to validate device size: %w", err)
+		}
+
+		// make sure we had unset snapshot metadata on CreateVolume
+		// from snapshot
+		var (
+			volSnapName        string
+			volSnapNamespace   string
+			volSnapContentName string
+			stdErr             string
+			imageList          []string
+		)
+		imageList, err = listRBDImages(f, defaultRBDPool)
+		if err != nil {
+			e2elog.Failf("failed to list rbd images: %v", err)
+		}
+		e2elog.Logf("list of rbd images: %v", imageList)
+		volSnapName, stdErr, err = execCommandInToolBoxPod(f,
+			formatImageMetaGetCmd(defaultRBDPool, imageList[0], volSnapNameKey),
+			rookNamespace)
+		if checkGetKeyError(err, stdErr) {
+			e2elog.Failf("found volume snapshot name %s/%s %s=%s: err=%v stdErr=%q",
+				rbdOptions(defaultRBDPool), imageList[0], volSnapNameKey, volSnapName, err, stdErr)
+		}
+		volSnapNamespace, stdErr, err = execCommandInToolBoxPod(f,
+			formatImageMetaGetCmd(defaultRBDPool, imageList[0], volSnapNamespaceKey),
+			rookNamespace)
+		if checkGetKeyError(err, stdErr) {
+			e2elog.Failf("found volume snapshot namespace %s/%s %s=%s: err=%v stdErr=%q",
+				rbdOptions(defaultRBDPool), imageList[0], volSnapNamespaceKey, volSnapNamespace, err, stdErr)
+		}
+		volSnapContentName, stdErr, err = execCommandInToolBoxPod(f,
+			formatImageMetaGetCmd(defaultRBDPool, imageList[0], volSnapContentNameKey),
+			rookNamespace)
+		if checkGetKeyError(err, stdErr) {
+			e2elog.Failf("found snapshotcontent name %s/%s %s=%s: err=%v stdErr=%q",
+				rbdOptions(defaultRBDPool), imageList[0], volSnapContentNameKey,
+				volSnapContentName, err, stdErr)
 		}
 	}
 	err = deletePVCAndApp("", f, pvcClone, appClone)

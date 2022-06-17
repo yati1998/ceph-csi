@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
+	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -60,7 +60,8 @@ func createCephfsStorageClass(
 	c kubernetes.Interface,
 	f *framework.Framework,
 	enablePool bool,
-	params map[string]string) error {
+	params map[string]string,
+) error {
 	scPath := fmt.Sprintf("%s/%s", cephFSExamplePath, "storageclass.yaml")
 	sc, err := getStorageClass(scPath)
 	if err != nil {
@@ -253,7 +254,8 @@ func getSnapName(snapNamespace, snapName string) (string, error) {
 func deleteBackingCephFSSubvolumeSnapshot(
 	f *framework.Framework,
 	pvc *v1.PersistentVolumeClaim,
-	snap *snapapi.VolumeSnapshot) error {
+	snap *snapapi.VolumeSnapshot,
+) error {
 	snapshotName, err := getSnapName(snap.Namespace, snap.Name)
 	if err != nil {
 		return err

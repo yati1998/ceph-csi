@@ -211,6 +211,37 @@ func checkGetKeyError(err error, stdErr string) bool {
 	return false
 }
 
+// checkClusternameInMetadata check for cluster name metadata on RBD image.
+// nolint:nilerr // intentionally returning nil on error in the retry loop.
+func checkClusternameInMetadata(f *framework.Framework, ns, pool, image string) {
+	t := time.Duration(deployTimeout) * time.Minute
+	var (
+		coName  string
+		stdErr  string
+		execErr error
+	)
+	err := wait.PollImmediate(poll, t, func() (bool, error) {
+		coName, stdErr, execErr = execCommandInToolBoxPod(f,
+			fmt.Sprintf("rbd image-meta get %s --image=%s %s", rbdOptions(pool), image, clusterNameKey),
+			ns)
+		if execErr != nil || stdErr != "" {
+			e2elog.Logf("failed to get cluster name %s/%s %s: err=%v stdErr=%q",
+				rbdOptions(pool), image, clusterNameKey, execErr, stdErr)
+
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		e2elog.Failf("could not get cluster name %s/%s %s: %v", rbdOptions(pool), image, clusterNameKey, err)
+	}
+	coName = strings.TrimSuffix(coName, "\n")
+	if coName != defaultClusterName {
+		e2elog.Failf("expected coName %q got %q", defaultClusterName, coName)
+	}
+}
+
 var _ = Describe("RBD", func() {
 	f := framework.NewDefaultFramework(rbdType)
 	var c clientset.Interface
@@ -289,6 +320,14 @@ var _ = Describe("RBD", func() {
 		// default io-timeout=0, needs kernel >= 5.4
 		if !util.CheckKernelSupport(kernelRelease, nbdZeroIOtimeoutSupport) {
 			nbdMapOptions = "nbd:debug-rbd=20,io-timeout=330"
+		}
+
+		// wait for cluster name update in deployment
+		containers := []string{"csi-rbdplugin", "csi-rbdplugin-controller"}
+		err = waitForContainersArgsUpdate(c, cephCSINamespace, rbdDeploymentName,
+			"clustername", defaultClusterName, containers, deployTimeout)
+		if err != nil {
+			e2elog.Failf("timeout waiting for deployment update %s/%s: %v", cephCSINamespace, rbdDeploymentName, err)
 		}
 	})
 
@@ -452,6 +491,8 @@ var _ = Describe("RBD", func() {
 				if pvName != pvcObj.Spec.VolumeName {
 					e2elog.Failf("expected pvName %q got %q", pvcObj.Spec.VolumeName, pvName)
 				}
+
+				checkClusternameInMetadata(f, rookNamespace, defaultRBDPool, imageList[0])
 
 				err = deletePVCAndValidatePV(f.ClientSet, pvc, deployTimeout)
 				if err != nil {
@@ -701,6 +742,7 @@ var _ = Describe("RBD", func() {
 					e2elog.Failf("PV name found on %s/%s %s=%s: err=%v stdErr=%q",
 						rbdOptions(defaultRBDPool), imageList[0], pvNameKey, pvName, err, stdErr)
 				}
+				checkClusternameInMetadata(f, rookNamespace, defaultRBDPool, imageList[0])
 
 				err = deleteSnapshot(&snap, deployTimeout)
 				if err != nil {
@@ -715,33 +757,30 @@ var _ = Describe("RBD", func() {
 			})
 
 			By("verify generic ephemeral volume support", func() {
-				// generic ephemeral volume support is supported from 1.21
-				if k8sVersionGreaterEquals(f.ClientSet, 1, 21) {
-					// create application
-					app, err := loadApp(appEphemeralPath)
-					if err != nil {
-						e2elog.Failf("failed to load application: %v", err)
-					}
-					app.Namespace = f.UniqueName
-					err = createApp(f.ClientSet, app, deployTimeout)
-					if err != nil {
-						e2elog.Failf("failed to create application: %v", err)
-					}
-					// validate created backend rbd images
-					validateRBDImageCount(f, 1, defaultRBDPool)
-					validateOmapCount(f, 1, rbdType, defaultRBDPool, volumesType)
-					err = deletePod(app.Name, app.Namespace, f.ClientSet, deployTimeout)
-					if err != nil {
-						e2elog.Failf("failed to delete application: %v", err)
-					}
-					// validate created backend rbd images
-					validateRBDImageCount(f, 0, defaultRBDPool)
-					validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
-					// validate images in trash
-					err = waitToRemoveImagesFromTrash(f, defaultRBDPool, deployTimeout)
-					if err != nil {
-						e2elog.Failf("failed to validate rbd images in pool %s trash: %v", defaultRBDPool, err)
-					}
+				// create application
+				app, err := loadApp(appEphemeralPath)
+				if err != nil {
+					e2elog.Failf("failed to load application: %v", err)
+				}
+				app.Namespace = f.UniqueName
+				err = createApp(f.ClientSet, app, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to create application: %v", err)
+				}
+				// validate created backend rbd images
+				validateRBDImageCount(f, 1, defaultRBDPool)
+				validateOmapCount(f, 1, rbdType, defaultRBDPool, volumesType)
+				err = deletePod(app.Name, app.Namespace, f.ClientSet, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to delete application: %v", err)
+				}
+				// validate created backend rbd images
+				validateRBDImageCount(f, 0, defaultRBDPool)
+				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
+				// validate images in trash
+				err = waitToRemoveImagesFromTrash(f, defaultRBDPool, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to validate rbd images in pool %s trash: %v", defaultRBDPool, err)
 				}
 			})
 
@@ -4039,6 +4078,153 @@ var _ = Describe("RBD", func() {
 						e2elog.Failf("failed to validate rbd images in pool %s trash: %v", defaultRBDPool, err)
 					}
 				})
+			})
+
+			By("validate rbd image stripe", func() {
+				stripeUnit := 4096
+				stripeCount := 8
+				objectSize := 131072
+				err := deleteResource(rbdExamplePath + "storageclass.yaml")
+				if err != nil {
+					e2elog.Failf("failed to delete storageclass: %v", err)
+				}
+
+				err = createRBDStorageClass(
+					f.ClientSet,
+					f,
+					defaultSCName,
+					nil,
+					map[string]string{
+						"stripeUnit":  fmt.Sprintf("%d", stripeUnit),
+						"stripeCount": fmt.Sprintf("%d", stripeCount),
+						"objectSize":  fmt.Sprintf("%d", objectSize),
+					},
+					deletePolicy)
+				if err != nil {
+					e2elog.Failf("failed to create storageclass: %v", err)
+				}
+				defer func() {
+					err = deleteResource(rbdExamplePath + "storageclass.yaml")
+					if err != nil {
+						e2elog.Failf("failed to delete storageclass: %v", err)
+					}
+					err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, nil, deletePolicy)
+					if err != nil {
+						e2elog.Failf("failed to create storageclass: %v", err)
+					}
+				}()
+
+				err = createRBDSnapshotClass(f)
+				if err != nil {
+					e2elog.Failf("failed to create storageclass: %v", err)
+				}
+				defer func() {
+					err = deleteRBDSnapshotClass()
+					if err != nil {
+						e2elog.Failf("failed to delete VolumeSnapshotClass: %v", err)
+					}
+				}()
+
+				// create PVC and bind it to an app
+				pvc, err := loadPVC(pvcPath)
+				if err != nil {
+					e2elog.Failf("failed to load PVC: %v", err)
+				}
+
+				pvc.Namespace = f.UniqueName
+
+				err = createPVCAndvalidatePV(f.ClientSet, pvc, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to create PVC and application: %v", err)
+				}
+				// validate created backend rbd images
+				validateRBDImageCount(f, 1, defaultRBDPool)
+				validateOmapCount(f, 1, rbdType, defaultRBDPool, volumesType)
+				err = validateStripe(f, pvc, stripeUnit, stripeCount, objectSize)
+				if err != nil {
+					e2elog.Failf("failed to validate stripe: %v", err)
+				}
+
+				snap := getSnapshot(snapshotPath)
+				snap.Namespace = f.UniqueName
+				snap.Spec.Source.PersistentVolumeClaimName = &pvc.Name
+
+				err = createSnapshot(&snap, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to create snapshot: %v", err)
+				}
+				// validate created backend rbd images
+				// parent PVC + snapshot
+				totalImages := 2
+				validateRBDImageCount(f, totalImages, defaultRBDPool)
+				validateOmapCount(f, 1, rbdType, defaultRBDPool, volumesType)
+				validateOmapCount(f, 1, rbdType, defaultRBDPool, snapsType)
+				pvcClone, err := loadPVC(pvcClonePath)
+				if err != nil {
+					e2elog.Failf("failed to load PVC: %v", err)
+				}
+
+				// create clone PVC as ROX
+				pvcClone.Namespace = f.UniqueName
+				pvcClone.Spec.AccessModes = []v1.PersistentVolumeAccessMode{v1.ReadOnlyMany}
+				err = createPVCAndvalidatePV(f.ClientSet, pvcClone, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to create PVC: %v", err)
+				}
+				// validate created backend rbd images
+				// parent pvc + snapshot + clone
+				totalImages = 3
+				validateRBDImageCount(f, totalImages, defaultRBDPool)
+				validateOmapCount(f, 2, rbdType, defaultRBDPool, volumesType)
+				validateOmapCount(f, 1, rbdType, defaultRBDPool, snapsType)
+				err = validateStripe(f, pvcClone, stripeUnit, stripeCount, objectSize)
+				if err != nil {
+					e2elog.Failf("failed to validate stripe for clone: %v", err)
+				}
+				// delete snapshot
+				err = deleteSnapshot(&snap, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to delete snapshot: %v", err)
+				}
+				// delete clone pvc
+				err = deletePVCAndValidatePV(f.ClientSet, pvcClone, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to delete PVC: %v", err)
+				}
+
+				pvcSmartClone, err := loadPVC(pvcSmartClonePath)
+				if err != nil {
+					e2elog.Failf("failed to load pvcSmartClone: %v", err)
+				}
+				pvcSmartClone.Namespace = f.UniqueName
+
+				err = createPVCAndvalidatePV(f.ClientSet, pvcSmartClone, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to create pvc: %v", err)
+				}
+				// validate created backend rbd images
+				// parent pvc + temp clone + clone
+				totalImages = 3
+				validateRBDImageCount(f, totalImages, defaultRBDPool)
+				validateOmapCount(f, 2, rbdType, defaultRBDPool, volumesType)
+				err = validateStripe(f, pvcSmartClone, stripeUnit, stripeCount, objectSize)
+				if err != nil {
+					e2elog.Failf("failed to validate stripe for clone: %v", err)
+				}
+				// delete parent pvc
+				err = deletePVCAndValidatePV(f.ClientSet, pvc, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to delete PVC: %v", err)
+				}
+
+				// delete clone pvc
+				err = deletePVCAndValidatePV(f.ClientSet, pvcSmartClone, deployTimeout)
+				if err != nil {
+					e2elog.Failf("failed to delete PVC: %v", err)
+				}
+				// validate created backend rbd images
+				validateRBDImageCount(f, 0, defaultRBDPool)
+				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
 			})
 
 			// Make sure this should be last testcase in this file, because

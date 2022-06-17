@@ -28,7 +28,7 @@ import (
 
 	"github.com/ceph/ceph-csi/internal/util"
 
-	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
+	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
 	v1 "k8s.io/api/core/v1"
 	scv1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -117,7 +117,8 @@ func createRBDStorageClass(
 	f *framework.Framework,
 	name string,
 	scOptions, parameters map[string]string,
-	policy v1.PersistentVolumeReclaimPolicy) error {
+	policy v1.PersistentVolumeReclaimPolicy,
+) error {
 	scPath := fmt.Sprintf("%s/%s", rbdExamplePath, "storageclass.yaml")
 	sc, err := getStorageClass(scPath)
 	if err != nil {
@@ -281,7 +282,7 @@ func getImageMeta(rbdImageSpec, metaKey string, f *framework.Framework) (string,
 		return "", err
 	}
 	if stdErr != "" {
-		return strings.TrimSpace(stdOut), fmt.Errorf(stdErr)
+		return strings.TrimSpace(stdOut), fmt.Errorf("%s", stdErr)
 	}
 
 	return strings.TrimSpace(stdOut), nil
@@ -757,7 +758,8 @@ func checkPVCImageInPool(f *framework.Framework, pvc *v1.PersistentVolumeClaim, 
 func checkPVCDataPoolForImageInPool(
 	f *framework.Framework,
 	pvc *v1.PersistentVolumeClaim,
-	pool, dataPool string) error {
+	pool, dataPool string,
+) error {
 	stdOut, err := getPVCImageInfoInPool(f, pvc, pool)
 	if err != nil {
 		return err
@@ -939,4 +941,70 @@ func waitToRemoveImagesFromTrash(f *framework.Framework, poolName string, t int)
 	}
 
 	return err
+}
+
+// imageInfo strongly typed JSON spec for image info.
+type imageInfo struct {
+	Name        string `json:"name"`
+	StripeUnit  int    `json:"stripe_unit"`
+	StripeCount int    `json:"stripe_count"`
+	ObjectSize  int    `json:"object_size"`
+}
+
+// getImageInfo queries rbd about the given image and returns its metadata, and returns
+// error if provided image is not found.
+func getImageInfo(f *framework.Framework, imageName, poolName string) (imageInfo, error) {
+	// rbd --format=json info [image-spec | snap-spec]
+	var imgInfo imageInfo
+
+	stdOut, stdErr, err := execCommandInToolBoxPod(
+		f,
+		fmt.Sprintf("rbd info %s %s --format json", rbdOptions(poolName), imageName),
+		rookNamespace)
+	if err != nil {
+		return imgInfo, fmt.Errorf("failed to get rbd info: %w", err)
+	}
+	if stdErr != "" {
+		return imgInfo, fmt.Errorf("failed to get rbd info: %v", stdErr)
+	}
+	err = json.Unmarshal([]byte(stdOut), &imgInfo)
+	if err != nil {
+		return imgInfo, fmt.Errorf("unmarshal failed: %w. raw buffer response: %s",
+			err, stdOut)
+	}
+
+	return imgInfo, nil
+}
+
+// validateStripe validate the stripe count, stripe unit and object size of the
+// image.
+func validateStripe(f *framework.Framework,
+	pvc *v1.PersistentVolumeClaim,
+	stripeUnit,
+	stripeCount,
+	objectSize int,
+) error {
+	imageData, err := getImageInfoFromPVC(pvc.Namespace, pvc.Name, f)
+	if err != nil {
+		return err
+	}
+
+	imgInfo, err := getImageInfo(f, imageData.imageName, defaultRBDPool)
+	if err != nil {
+		return err
+	}
+
+	if imgInfo.ObjectSize != objectSize {
+		return fmt.Errorf("objectSize %d does not match expected %d", imgInfo.ObjectSize, objectSize)
+	}
+
+	if imgInfo.StripeUnit != stripeUnit {
+		return fmt.Errorf("stripeUnit %d does not match expected %d", imgInfo.StripeUnit, stripeUnit)
+	}
+
+	if imgInfo.StripeCount != stripeCount {
+		return fmt.Errorf("stripeCount %d does not match expected %d", imgInfo.StripeCount, stripeCount)
+	}
+
+	return nil
 }

@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
+	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
 	. "github.com/onsi/ginkgo" // nolint
 	v1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -143,7 +143,8 @@ func createNFSStorageClass(
 	c clientset.Interface,
 	f *framework.Framework,
 	enablePool bool,
-	params map[string]string) error {
+	params map[string]string,
+) error {
 	scPath := fmt.Sprintf("%s/%s", nfsExamplePath, "storageclass.yaml")
 	sc, err := getStorageClass(scPath)
 	if err != nil {

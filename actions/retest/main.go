@@ -59,7 +59,6 @@ func getConfig() *retestConfig {
 			if len(strings.Split(os.Getenv("GITHUB_REPOSITORY"), "/")) == 2 {
 				return strings.Split(os.Getenv("GITHUB_REPOSITORY"), "/")[0], strings.Split(os.Getenv("GITHUB_REPOSITORY"), "/")[1]
 			}
-
 		}
 		return "", ""
 	}()
@@ -168,7 +167,7 @@ func main() {
 							log.Printf("failed to create comment %v\n", err)
 							continue
 						}
-						//Post comment with target URL for retesting
+						// Post comment with target URL for retesting
 						msg = fmt.Sprintf("@%s %q test failed. Logs are available at [location](%s) for debugging", re.GetUser().GetLogin(), r.GetContext(), r.GetTargetURL())
 						comment.Body = github.String(msg)
 						_, _, err = c.client.Issues.CreateComment(context.TODO(), c.owner, c.repo, prNumber, comment)
@@ -199,7 +198,8 @@ func main() {
 
 // checkPRRequiredApproval check PullRequest has required approvals.
 func (c *retestConfig) checkPRRequiredApproval(prNumber int) bool {
-	rev, _, err := c.client.PullRequests.ListReviews(context.TODO(), c.owner, c.repo, prNumber, &github.ListOptions{})
+	opts := github.ListOptions{PerPage: 100} // defaults to 30 reviews, too few sometimes
+	rev, _, err := c.client.PullRequests.ListReviews(context.TODO(), c.owner, c.repo, prNumber, &opts)
 	if err != nil {
 		log.Printf("failed to list reviews %v\n", err)
 		return false

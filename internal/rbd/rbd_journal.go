@@ -116,7 +116,8 @@ func checkSnapCloneExists(
 	ctx context.Context,
 	parentVol *rbdVolume,
 	rbdSnap *rbdSnapshot,
-	cr *util.Credentials) (bool, error) {
+	cr *util.Credentials,
+) (bool, error) {
 	err := validateRbdSnap(rbdSnap)
 	if err != nil {
 		return false, err
@@ -392,7 +393,7 @@ func reserveSnap(ctx context.Context, rbdSnap *rbdSnapshot, rbdVol *rbdVolume, c
 
 	rbdSnap.ReservedID, rbdSnap.RbdSnapName, err = j.ReserveName(
 		ctx, rbdSnap.JournalPool, journalPoolID, rbdSnap.Pool, imagePoolID,
-		rbdSnap.RequestName, rbdSnap.NamePrefix, rbdVol.RbdImageName, kmsID, rbdSnap.ReservedID, rbdVol.Owner)
+		rbdSnap.RequestName, rbdSnap.NamePrefix, rbdVol.RbdImageName, kmsID, rbdSnap.ReservedID, rbdVol.Owner, "")
 	if err != nil {
 		return err
 	}
@@ -472,7 +473,7 @@ func reserveVol(ctx context.Context, rbdVol *rbdVolume, rbdSnap *rbdSnapshot, cr
 
 	rbdVol.ReservedID, rbdVol.RbdImageName, err = j.ReserveName(
 		ctx, rbdVol.JournalPool, journalPoolID, rbdVol.Pool, imagePoolID,
-		rbdVol.RequestName, rbdVol.NamePrefix, "", kmsID, rbdVol.ReservedID, rbdVol.Owner)
+		rbdVol.RequestName, rbdVol.NamePrefix, "", kmsID, rbdVol.ReservedID, rbdVol.Owner, "")
 	if err != nil {
 		return err
 	}
@@ -540,8 +541,10 @@ func RegenerateJournal(
 	claimName,
 	volumeID,
 	requestName,
-	owner string,
-	cr *util.Credentials) (string, error) {
+	owner,
+	clusterName string,
+	cr *util.Credentials,
+) (string, error) {
 	ctx := context.Background()
 	var (
 		vi     util.CSIIdentifier
@@ -553,6 +556,7 @@ func RegenerateJournal(
 
 	rbdVol = &rbdVolume{}
 	rbdVol.VolID = volumeID
+	rbdVol.ClusterName = clusterName
 
 	err = vi.DecomposeCSIID(rbdVol.VolID)
 	if err != nil {
@@ -633,7 +637,7 @@ func RegenerateJournal(
 
 	rbdVol.ReservedID, rbdVol.RbdImageName, err = j.ReserveName(
 		ctx, rbdVol.JournalPool, journalPoolID, rbdVol.Pool, imagePoolID,
-		rbdVol.RequestName, rbdVol.NamePrefix, "", kmsID, vi.ObjectUUID, rbdVol.Owner)
+		rbdVol.RequestName, rbdVol.NamePrefix, "", kmsID, vi.ObjectUUID, rbdVol.Owner, "")
 	if err != nil {
 		return "", err
 	}

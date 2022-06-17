@@ -93,7 +93,8 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 func (r *ReconcilePersistentVolume) getCredentials(
 	ctx context.Context,
 	name,
-	namespace string) (*util.Credentials, error) {
+	namespace string,
+) (*util.Credentials, error) {
 	var cr *util.Credentials
 
 	if name == "" || namespace == "" {
@@ -183,6 +184,7 @@ func (r ReconcilePersistentVolume) reconcilePV(ctx context.Context, obj runtime.
 		volumeHandler,
 		requestName,
 		pvcNamespace,
+		r.config.ClusterName,
 		cr)
 	if err != nil {
 		log.ErrorLogMsg("failed to regenerate journal %s", err)
@@ -199,7 +201,8 @@ func (r ReconcilePersistentVolume) reconcilePV(ctx context.Context, obj runtime.
 // Reconcile reconciles the PersistentVolume object and creates a new omap entries
 // for the volume.
 func (r *ReconcilePersistentVolume) Reconcile(ctx context.Context,
-	request reconcile.Request) (reconcile.Result, error) {
+	request reconcile.Request,
+) (reconcile.Result, error) {
 	pv := &corev1.PersistentVolume{}
 	err := r.client.Get(ctx, request.NamespacedName, pv)
 	if err != nil {

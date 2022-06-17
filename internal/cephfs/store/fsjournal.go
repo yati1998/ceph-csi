@@ -77,7 +77,8 @@ func CheckVolExists(ctx context.Context,
 
 	pvID *VolumeIdentifier,
 	sID *SnapshotIdentifier,
-	cr *util.Credentials) (*VolumeIdentifier, error) {
+	cr *util.Credentials,
+) (*VolumeIdentifier, error) {
 	var vid VolumeIdentifier
 	// Connect to cephfs' default radosNamespace (csi)
 	j, err := VolJournal.Connect(volOptions.Monitors, fsutil.RadosNamespace, cr)
@@ -99,7 +100,7 @@ func CheckVolExists(ctx context.Context,
 	volOptions.VolID = vid.FsSubvolName
 
 	vol := core.NewSubVolume(volOptions.conn, &volOptions.SubVolume, volOptions.ClusterID)
-	if sID != nil || pvID != nil {
+	if (sID != nil || pvID != nil) && imageData.ImageAttributes.BackingSnapshotID == "" {
 		cloneState, cloneStateErr := vol.GetCloneState(ctx)
 		if cloneStateErr != nil {
 			if errors.Is(cloneStateErr, cerrors.ErrVolumeNotFound) {
@@ -152,25 +153,28 @@ func CheckVolExists(ctx context.Context,
 			return nil, fmt.Errorf("clone is not in complete state for %s", vid.FsSubvolName)
 		}
 	}
-	volOptions.RootPath, err = vol.GetVolumeRootPathCeph(ctx)
-	if err != nil {
-		if errors.Is(err, cerrors.ErrVolumeNotFound) {
-			// If the subvolume is not present, cleanup the stale snapshot
-			// created for clone.
-			if parentVolOpt != nil && pvID != nil {
-				err = vol.CleanupSnapshotFromSubvolume(
-					ctx, &parentVolOpt.SubVolume)
-				if err != nil {
-					return nil, err
+
+	if imageData.ImageAttributes.BackingSnapshotID == "" {
+		volOptions.RootPath, err = vol.GetVolumeRootPathCeph(ctx)
+		if err != nil {
+			if errors.Is(err, cerrors.ErrVolumeNotFound) {
+				// If the subvolume is not present, cleanup the stale snapshot
+				// created for clone.
+				if parentVolOpt != nil && pvID != nil {
+					err = vol.CleanupSnapshotFromSubvolume(
+						ctx, &parentVolOpt.SubVolume)
+					if err != nil {
+						return nil, err
+					}
 				}
+				err = j.UndoReservation(ctx, volOptions.MetadataPool,
+					volOptions.MetadataPool, vid.FsSubvolName, volOptions.RequestName)
+
+				return nil, err
 			}
-			err = j.UndoReservation(ctx, volOptions.MetadataPool,
-				volOptions.MetadataPool, vid.FsSubvolName, volOptions.RequestName)
 
 			return nil, err
 		}
-
-		return nil, err
 	}
 
 	// check if topology constraints match what is found
@@ -205,7 +209,8 @@ func UndoVolReservation(
 	ctx context.Context,
 	volOptions *VolumeOptions,
 	vid VolumeIdentifier,
-	secret map[string]string) error {
+	secret map[string]string,
+) error {
 	cr, err := util.NewAdminCredentials(secret)
 	if err != nil {
 		return err
@@ -269,7 +274,7 @@ func ReserveVol(ctx context.Context, volOptions *VolumeOptions, secret map[strin
 	imageUUID, vid.FsSubvolName, err = j.ReserveName(
 		ctx, volOptions.MetadataPool, util.InvalidPoolID,
 		volOptions.MetadataPool, util.InvalidPoolID, volOptions.RequestName,
-		volOptions.NamePrefix, "", "", volOptions.ReservedID, "")
+		volOptions.NamePrefix, "", "", volOptions.ReservedID, "", volOptions.BackingSnapshotID)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +299,8 @@ func ReserveSnap(
 	volOptions *VolumeOptions,
 	parentSubVolName string,
 	snap *SnapshotOption,
-	cr *util.Credentials) (*SnapshotIdentifier, error) {
+	cr *util.Credentials,
+) (*SnapshotIdentifier, error) {
 	var (
 		vid       SnapshotIdentifier
 		imageUUID string
@@ -311,7 +317,7 @@ func ReserveSnap(
 	imageUUID, vid.FsSnapshotName, err = j.ReserveName(
 		ctx, volOptions.MetadataPool, util.InvalidPoolID,
 		volOptions.MetadataPool, util.InvalidPoolID, snap.RequestName,
-		snap.NamePrefix, parentSubVolName, "", snap.ReservedID, "")
+		snap.NamePrefix, parentSubVolName, "", snap.ReservedID, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +341,8 @@ func UndoSnapReservation(
 	volOptions *VolumeOptions,
 	vid SnapshotIdentifier,
 	snapName string,
-	cr *util.Credentials) error {
+	cr *util.Credentials,
+) error {
 	// Connect to cephfs' default radosNamespace (csi)
 	j, err := SnapJournal.Connect(volOptions.Monitors, fsutil.RadosNamespace, cr)
 	if err != nil {
@@ -367,7 +374,8 @@ func CheckSnapExists(
 	ctx context.Context,
 	volOptions *VolumeOptions,
 	snap *SnapshotOption,
-	cr *util.Credentials) (*SnapshotIdentifier, *core.SnapshotInfo, error) {
+	cr *util.Credentials,
+) (*SnapshotIdentifier, *core.SnapshotInfo, error) {
 	// Connect to cephfs' default radosNamespace (csi)
 	j, err := SnapJournal.Connect(volOptions.Monitors, fsutil.RadosNamespace, cr)
 	if err != nil {

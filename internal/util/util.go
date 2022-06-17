@@ -121,6 +121,9 @@ type Config struct {
 
 	// CSI-Addons endpoint
 	CSIAddonsEndpoint string
+
+	// Cluster name
+	ClusterName string
 }
 
 // ValidateDriverName validates the driver name.
@@ -260,7 +263,8 @@ func GenerateVolID(
 	cr *Credentials,
 	locationID int64,
 	pool, clusterID, objUUID string,
-	volIDVersion uint16) (string, error) {
+	volIDVersion uint16,
+) (string, error) {
 	var err error
 
 	if locationID == InvalidPoolID {

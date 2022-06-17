@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -78,6 +79,9 @@ const (
 
 	// krbd attribute file to check supported features.
 	krbdSupportedFeaturesFile = "/sys/bus/rbd/supported_features"
+
+	// clusterNameKey cluster Key, set on RBD image.
+	clusterNameKey = "csi.ceph.com/cluster/name"
 )
 
 // rbdImage contains common attributes and methods for the rbdVolume and
@@ -95,6 +99,11 @@ type rbdImage struct {
 
 	// VolSize is the size of the RBD image backing this rbdImage.
 	VolSize int64
+
+	// image striping configurations.
+	StripeCount uint64
+	StripeUnit  uint64
+	ObjectSize  uint64
 
 	Monitors string
 	// JournalPool is the ceph pool in which the CSI Journal/CSI snapshot Journal is
@@ -120,6 +129,9 @@ type rbdImage struct {
 	ImageFeatureSet librbd.FeatureSet
 	// Primary represent if the image is primary or not.
 	Primary bool
+
+	// Cluster name
+	ClusterName string
 
 	// encryption provides access to optional VolumeEncryption functions
 	encryption *util.VolumeEncryption
@@ -402,27 +414,19 @@ func (rs *rbdSnapshot) String() string {
 // createImage creates a new ceph image with provision and volume options.
 func createImage(ctx context.Context, pOpts *rbdVolume, cr *util.Credentials) error {
 	volSzMiB := fmt.Sprintf("%dM", util.RoundOffVolSize(pOpts.VolSize))
-	options := librbd.NewRbdImageOptions()
 
-	logMsg := "rbd: create %s size %s (features: %s) using mon %s"
-	if pOpts.DataPool != "" {
-		logMsg += fmt.Sprintf(", data pool %s", pOpts.DataPool)
-		err := options.SetString(librbd.RbdImageOptionDataPool, pOpts.DataPool)
-		if err != nil {
-			return fmt.Errorf("failed to set data pool: %w", err)
-		}
-	}
-	log.DebugLog(ctx, logMsg,
+	log.DebugLog(ctx, "rbd: create %s size %s (features: %s) using mon %s",
 		pOpts, volSzMiB, pOpts.ImageFeatureSet.Names(), pOpts.Monitors)
 
-	if pOpts.ImageFeatureSet != 0 {
-		err := options.SetUint64(librbd.RbdImageOptionFeatures, uint64(pOpts.ImageFeatureSet))
-		if err != nil {
-			return fmt.Errorf("failed to set image features: %w", err)
-		}
+	options := librbd.NewRbdImageOptions()
+	defer options.Destroy()
+
+	err := pOpts.setImageOptions(ctx, options)
+	if err != nil {
+		return err
 	}
 
-	err := pOpts.Connect(cr)
+	err = pOpts.Connect(cr)
 	if err != nil {
 		return err
 	}
@@ -722,7 +726,8 @@ func flattenClonedRbdImages(
 	ctx context.Context,
 	snaps []librbd.SnapInfo,
 	pool, monitors, rbdImageName string,
-	cr *util.Credentials) error {
+	cr *util.Credentials,
+) error {
 	rv := &rbdVolume{}
 	rv.Monitors = monitors
 	rv.Pool = pool
@@ -769,7 +774,8 @@ func flattenClonedRbdImages(
 func (ri *rbdImage) flattenRbdImage(
 	ctx context.Context,
 	forceFlatten bool,
-	hardlimit, softlimit uint) error {
+	hardlimit, softlimit uint,
+) error {
 	var depth uint
 	var err error
 
@@ -926,7 +932,8 @@ func genSnapFromSnapID(
 	rbdSnap *rbdSnapshot,
 	snapshotID string,
 	cr *util.Credentials,
-	secrets map[string]string) error {
+	secrets map[string]string,
+) error {
 	var vi util.CSIIdentifier
 
 	rbdSnap.VolID = snapshotID
@@ -1036,7 +1043,8 @@ func generateVolumeFromVolumeID(
 	volumeID string,
 	vi util.CSIIdentifier,
 	cr *util.Credentials,
-	secrets map[string]string) (*rbdVolume, error) {
+	secrets map[string]string,
+) (*rbdVolume, error) {
 	var (
 		rbdVol *rbdVolume
 		err    error
@@ -1123,7 +1131,8 @@ func GenVolFromVolID(
 	ctx context.Context,
 	volumeID string,
 	cr *util.Credentials,
-	secrets map[string]string) (*rbdVolume, error) {
+	secrets map[string]string,
+) (*rbdVolume, error) {
 	var (
 		vi  util.CSIIdentifier
 		vol *rbdVolume
@@ -1165,7 +1174,8 @@ func generateVolumeFromMapping(
 	volumeID string,
 	vi util.CSIIdentifier,
 	cr *util.Credentials,
-	secrets map[string]string) (*rbdVolume, error) {
+	secrets map[string]string,
+) (*rbdVolume, error) {
 	nvi := vi
 	vol := &rbdVolume{}
 	// extract clusterID mapping
@@ -1215,7 +1225,8 @@ func generateVolumeFromMapping(
 func genVolFromVolumeOptions(
 	ctx context.Context,
 	volOptions map[string]string,
-	disableInUseChecks, checkClusterIDMapping bool) (*rbdVolume, error) {
+	disableInUseChecks, checkClusterIDMapping bool,
+) (*rbdVolume, error) {
 	var (
 		ok         bool
 		err        error
@@ -1267,7 +1278,38 @@ func genVolFromVolumeOptions(
 		rbdVol.Mounter)
 	rbdVol.DisableInUseChecks = disableInUseChecks
 
+	err = rbdVol.setStripeConfiguration(volOptions)
+	if err != nil {
+		return nil, err
+	}
+
 	return rbdVol, nil
+}
+
+func (ri *rbdImage) setStripeConfiguration(options map[string]string) error {
+	var err error
+	if val, ok := options["stripeUnit"]; ok {
+		ri.StripeUnit, err = strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse stripeUnit %s: %w", val, err)
+		}
+	}
+
+	if val, ok := options["stripeCount"]; ok {
+		ri.StripeCount, err = strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse stripeCount %s: %w", val, err)
+		}
+	}
+
+	if val, ok := options["objectSize"]; ok {
+		ri.ObjectSize, err = strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse objectSize %s: %w", val, err)
+		}
+	}
+
+	return nil
 }
 
 func (rv *rbdVolume) validateImageFeatures(imageFeatures string) error {
@@ -1368,9 +1410,11 @@ func (ri *rbdImage) deleteSnapshot(ctx context.Context, pOpts *rbdSnapshot) erro
 func (rv *rbdVolume) cloneRbdImageFromSnapshot(
 	ctx context.Context,
 	pSnapOpts *rbdSnapshot,
-	parentVol *rbdVolume) error {
+	parentVol *rbdVolume,
+) error {
 	var err error
-	logMsg := "rbd: clone %s %s (features: %s) using mon %s"
+	log.DebugLog(ctx, "rbd: clone %s %s (features: %s) using mon %s",
+		pSnapOpts, rv, rv.ImageFeatureSet.Names(), rv.Monitors)
 
 	err = parentVol.openIoctx()
 	if err != nil {
@@ -1383,30 +1427,15 @@ func (rv *rbdVolume) cloneRbdImageFromSnapshot(
 
 	options := librbd.NewRbdImageOptions()
 	defer options.Destroy()
-
-	if rv.DataPool != "" {
-		logMsg += fmt.Sprintf(", data pool %s", rv.DataPool)
-		err = options.SetString(librbd.RbdImageOptionDataPool, rv.DataPool)
-		if err != nil {
-			return fmt.Errorf("failed to set data pool: %w", err)
-		}
-	}
-
-	log.DebugLog(ctx, logMsg,
-		pSnapOpts, rv, rv.ImageFeatureSet.Names(), rv.Monitors)
-
-	if rv.ImageFeatureSet != 0 {
-		err = options.SetUint64(librbd.RbdImageOptionFeatures, uint64(rv.ImageFeatureSet))
-		if err != nil {
-			return fmt.Errorf("failed to set image features: %w", err)
-		}
+	err = rv.setImageOptions(ctx, options)
+	if err != nil {
+		return err
 	}
 
 	err = options.SetUint64(librbd.ImageOptionCloneFormat, 2)
 	if err != nil {
-		return fmt.Errorf("failed to set image features: %w", err)
+		return err
 	}
-
 	// As the clone is yet to be created, open the Ioctx.
 	err = rv.openIoctx()
 	if err != nil {
@@ -1443,6 +1472,52 @@ func (rv *rbdVolume) cloneRbdImageFromSnapshot(
 
 	// Success! Do not delete the cloned image now :)
 	deleteClone = false
+
+	return nil
+}
+
+// setImageOptions sets the image options.
+func (rv *rbdVolume) setImageOptions(ctx context.Context, options *librbd.ImageOptions) error {
+	var err error
+
+	logMsg := fmt.Sprintf("setting image options on %s", rv)
+	if rv.DataPool != "" {
+		logMsg += fmt.Sprintf(", data pool %s", rv.DataPool)
+		err = options.SetString(librbd.RbdImageOptionDataPool, rv.DataPool)
+		if err != nil {
+			return fmt.Errorf("failed to set data pool: %w", err)
+		}
+	}
+
+	if rv.ImageFeatureSet != 0 {
+		err = options.SetUint64(librbd.RbdImageOptionFeatures, uint64(rv.ImageFeatureSet))
+		if err != nil {
+			return fmt.Errorf("failed to set image features: %w", err)
+		}
+	}
+
+	if rv.StripeCount != 0 {
+		logMsg += fmt.Sprintf(", stripe count %d, stripe unit %d", rv.StripeCount, rv.StripeUnit)
+		err = options.SetUint64(librbd.RbdImageOptionStripeCount, rv.StripeCount)
+		if err != nil {
+			return fmt.Errorf("failed to set stripe count: %w", err)
+		}
+		err = options.SetUint64(librbd.RbdImageOptionStripeUnit, rv.StripeUnit)
+		if err != nil {
+			return fmt.Errorf("failed to set stripe unit: %w", err)
+		}
+	}
+
+	if rv.ObjectSize != 0 {
+		order := uint64(math.Log2(float64(rv.ObjectSize)))
+		logMsg += fmt.Sprintf(", object size %d, order %d", rv.ObjectSize, order)
+		err = options.SetUint64(librbd.RbdImageOptionOrder, order)
+		if err != nil {
+			return fmt.Errorf("failed to set object size: %w", err)
+		}
+	}
+
+	log.DebugLog(ctx, logMsg)
 
 	return nil
 }
@@ -1904,7 +1979,8 @@ func (ri *rbdImage) isCompabitableClone(dst *rbdImage) error {
 
 func (ri *rbdImage) addSnapshotScheduling(
 	interval admin.Interval,
-	startTime admin.StartTime) error {
+	startTime admin.StartTime,
+) error {
 	ls := admin.NewLevelSpec(ri.Pool, ri.RadosNamespace, ri.RbdImageName)
 	ra, err := ri.conn.GetRBDAdmin()
 	if err != nil {
@@ -1965,7 +2041,8 @@ func strategicActionOnLogFile(ctx context.Context, logStrategy, logFile string) 
 
 // genVolFromVolIDWithMigration populate a rbdVol structure based on the volID format.
 func genVolFromVolIDWithMigration(
-	ctx context.Context, volID string, cr *util.Credentials, secrets map[string]string) (*rbdVolume, error) {
+	ctx context.Context, volID string, cr *util.Credentials, secrets map[string]string,
+) (*rbdVolume, error) {
 	if isMigrationVolID(volID) {
 		pmVolID, pErr := parseMigrationVolID(volID)
 		if pErr != nil {
@@ -1991,6 +2068,14 @@ func (rv *rbdVolume) setAllMetadata(parameters map[string]string) error {
 		}
 	}
 
+	if rv.ClusterName != "" {
+		err := rv.SetMetadata(clusterNameKey, rv.ClusterName)
+		if err != nil {
+			return fmt.Errorf("failed to set metadata key %q, value %q on image: %w",
+				clusterNameKey, rv.ClusterName, err)
+		}
+	}
+
 	return nil
 }
 
@@ -2002,6 +2087,12 @@ func (rv *rbdVolume) unsetAllMetadata(keys []string) error {
 		if err != nil && !strings.Contains(err.Error(), "No such file or directory") {
 			return fmt.Errorf("failed to unset metadata key %q on %q: %w", key, rv, err)
 		}
+	}
+
+	err := rv.RemoveMetadata(clusterNameKey)
+	// TODO: replace string comparison with errno.
+	if err != nil && !strings.Contains(err.Error(), "No such file or directory") {
+		return fmt.Errorf("failed to unset metadata key %q on %q: %w", clusterNameKey, rv, err)
 	}
 
 	return nil

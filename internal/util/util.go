@@ -58,6 +58,22 @@ func RoundOffBytes(bytes int64) int64 {
 	return num
 }
 
+// RoundOffCephFSVolSize rounds up the bytes to 4MiB if the request is less
+// than 4MiB or if its greater it rounds up to multiple of 4MiB.
+func RoundOffCephFSVolSize(bytes int64) int64 {
+	// Minimum supported size is 1MiB in CephCSI, if the request is <4MiB,
+	// round off to 4MiB.
+	if bytes < helpers.MiB {
+		return 4 * helpers.MiB
+	}
+
+	bytes /= helpers.MiB
+
+	bytes = int64(math.Ceil(float64(bytes)/4) * 4)
+
+	return RoundOffBytes(bytes * helpers.MiB)
+}
+
 // variables which will be set during the build time.
 var (
 	// GitCommit tell the latest git commit image is built from.
@@ -82,7 +98,12 @@ type Config struct {
 	MetricsPath     string // path of prometheus endpoint where metrics will be available
 	HistogramOption string // Histogram option for grpc metrics, should be comma separated value,
 	// ex:= "0.5,2,6" where start=0.5 factor=2, count=6
-	MetricsIP         string        // TCP port for liveness/ metrics requests
+	MetricsIP string // TCP port for liveness/ metrics requests
+
+	// mount option related flags
+	KernelMountOptions string // Comma separated string of mount options accepted by cephfs kernel mounter
+	FuseMountOptions   string // Comma separated string of mount options accepted by ceph-fuse mounter
+
 	PidLimit          int           // PID limit to configure through cgroups")
 	MetricsPort       int           // TCP port for liveness/grpc metrics requests
 	PollTime          time.Duration // time interval in seconds between each poll
@@ -304,9 +325,8 @@ func checkDirExists(p string) bool {
 }
 
 // IsMountPoint checks if the given path is mountpoint or not.
-func IsMountPoint(p string) (bool, error) {
-	dummyMount := mount.New("")
-	notMnt, err := dummyMount.IsLikelyNotMountPoint(p)
+func IsMountPoint(mounter mount.Interface, p string) (bool, error) {
+	notMnt, err := mounter.IsLikelyNotMountPoint(p)
 	if err != nil {
 		return false, err
 	}
@@ -327,10 +347,8 @@ func ReadMountInfoForProc(proc string) ([]mount.MountInfo, error) {
 }
 
 // Mount mounts the source to target path.
-func Mount(source, target, fstype string, options []string) error {
-	dummyMount := mount.New("")
-
-	return dummyMount.MountSensitiveWithoutSystemd(source, target, fstype, options, nil)
+func Mount(mounter mount.Interface, source, target, fstype string, options []string) error {
+	return mounter.MountSensitiveWithoutSystemd(source, target, fstype, options, nil)
 }
 
 // MountOptionsAdd adds the `add` mount options to the `options` and returns a

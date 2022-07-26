@@ -102,6 +102,11 @@ nodeplugin:
   # on kernel < 4.17 which support quotas
   # forcecephkernelclient: true
 
+  # common mount options to apply all mounting
+  # example: kernelmountoptions: "recover_session=clean"
+  kernelmountoptions: ""
+  fusemountoptions: ""
+
   # If true, create & use Pod Security Policy resources
   # https://kubernetes.io/docs/concepts/policy/pod-security-policy/
   podSecurityPolicy:
@@ -166,7 +171,7 @@ provisioner:
   provisioner:
     image:
       repository: registry.k8s.io/sig-storage/csi-provisioner
-      tag: v3.1.0
+      tag: v3.2.1
       pullPolicy: IfNotPresent
     resources: {}
 

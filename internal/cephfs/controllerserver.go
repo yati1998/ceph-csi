@@ -205,23 +205,7 @@ func checkValidCreateVolumeRequest(
 			return errors.New("cloning snapshot-backed volumes is currently not supported")
 		}
 	case sID != nil:
-		if vol.Size < parentVol.Size {
-			return fmt.Errorf(
-				"cannot restore from snapshot %s: volume size %d is smaller than source volume size %d",
-				sID.SnapshotID,
-				parentVol.Size,
-				vol.Size)
-		}
-
 		if vol.BackingSnapshot {
-			if vol.Size != parentVol.Size {
-				return fmt.Errorf(
-					"cannot create snapshot-backed volume of different size: expected %d bytes, got %d bytes",
-					parentVol.Size,
-					vol.Size,
-				)
-			}
-
 			volCaps := req.GetVolumeCapabilities()
 			for _, volCap := range volCaps {
 				mode := volCap.AccessMode.Mode
@@ -277,7 +261,7 @@ func (cs *ControllerServer) CreateVolume(
 	defer volOptions.Destroy()
 
 	if req.GetCapacityRange() != nil {
-		volOptions.Size = util.RoundOffBytes(req.GetCapacityRange().GetRequiredBytes())
+		volOptions.Size = util.RoundOffCephFSVolSize(req.GetCapacityRange().GetRequiredBytes())
 	}
 
 	parentVol, pvID, sID, err := checkContentSource(ctx, req, cr)
@@ -672,7 +656,8 @@ func (cs *ControllerServer) ControllerExpandVolume(
 		return nil, status.Error(codes.InvalidArgument, "cannot expand snapshot-backed volume")
 	}
 
-	RoundOffSize := util.RoundOffBytes(req.GetCapacityRange().GetRequiredBytes())
+	RoundOffSize := util.RoundOffCephFSVolSize(req.GetCapacityRange().GetRequiredBytes())
+
 	volClient := core.NewSubVolume(volOptions.GetConnection(), &volOptions.SubVolume, volOptions.ClusterID)
 	if err = volClient.ResizeVolume(ctx, RoundOffSize); err != nil {
 		log.ErrorLog(ctx, "failed to expand volume %s: %v", fsutil.VolumeID(volIdentifier.FsSubvolName), err)

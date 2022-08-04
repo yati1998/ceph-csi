@@ -58,7 +58,7 @@ spec:
           imagePullPolicy: {{ .Values.provisioner.provisioner.image.pullPolicy }}
           args:
             - "--csi-address=$(ADDRESS)"
-            - "--v={{ .Values.logLevel }}"
+            - "--v={{ .Values.sidecarLogLevel }}"
             - "--timeout={{ .Values.provisioner.timeout }}"
             - "--leader-election=true"
             - "--retry-interval-start=500ms"
@@ -78,9 +78,10 @@ spec:
           imagePullPolicy: {{ .Values.provisioner.snapshotter.image.pullPolicy }}
           args:
             - "--csi-address=$(ADDRESS)"
-            - "--v={{ .Values.logLevel }}"
+            - "--v={{ .Values.sidecarLogLevel }}"
             - "--timeout={{ .Values.provisioner.timeout }}"
             - "--leader-election=true"
+            - "--extra-create-metadata=true"
           env:
             - name: ADDRESS
               value: "unix:///csi/{{ .Values.provisionerSocketFile }}"
@@ -94,7 +95,7 @@ spec:
           image: "{{ .Values.provisioner.resizer.image.repository }}:{{ .Values.provisioner.resizer.image.tag }}"
           imagePullPolicy: {{ .Values.provisioner.resizer.image.pullPolicy }}
           args:
-            - "--v={{ .Values.logLevel }}"
+            - "--v={{ .Values.sidecarLogLevel }}"
             - "--csi-address=$(ADDRESS)"
             - "--timeout={{ .Values.provisioner.timeout }}"
             - "--leader-election"
@@ -124,6 +125,10 @@ spec:
 {{- if .Values.provisioner.profiling.enabled }}
             - "--enableprofiling={{ .Values.provisioner.profiling.enabled }}"
 {{- end }}
+{{- if .Values.provisioner.clustername }}
+            - "--clustername={{ .Values.provisioner.clustername }}"
+{{- end }}
+            - "--setmetadata={{ .Values.provisioner.setmetadata }}"
           env:
             - name: POD_IP
               valueFrom:

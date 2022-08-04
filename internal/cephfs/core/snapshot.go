@@ -51,12 +51,21 @@ type SnapshotClient interface {
 	UnprotectSnapshot(ctx context.Context) error
 	// CloneSnapshot clones the snapshot of the subvolume.
 	CloneSnapshot(ctx context.Context, cloneVolOptions *SubVolume) error
+	// SetAllSnapshotMetadata set all the metadata from arg parameters on
+	// subvolume snapshot.
+	SetAllSnapshotMetadata(parameters map[string]string) error
+	// UnsetAllSnapshotMetadata unset all the metadata from arg keys on
+	// subvolume snapshot.
+	UnsetAllSnapshotMetadata(keys []string) error
 }
 
 // snapshotClient is the implementation of SnapshotClient interface.
 type snapshotClient struct {
-	*Snapshot                         // Embedded snapshot struct.
-	conn      *util.ClusterConnection // Cluster connection.
+	*Snapshot                              // Embedded snapshot struct.
+	clusterID      string                  // Cluster ID.
+	clusterName    string                  // Cluster Name.
+	enableMetadata bool                    // Set metadata on volume
+	conn           *util.ClusterConnection // Cluster connection.
 }
 
 // Snapshot represents a subvolume snapshot and its cluster information.
@@ -66,13 +75,23 @@ type Snapshot struct {
 }
 
 // NewSnapshot creates a new snapshot client.
-func NewSnapshot(conn *util.ClusterConnection, snapshotID string, vol *SubVolume) SnapshotClient {
+func NewSnapshot(
+	conn *util.ClusterConnection,
+	snapshotID,
+	clusterID,
+	clusterName string,
+	setMetadata bool,
+	vol *SubVolume,
+) SnapshotClient {
 	return &snapshotClient{
 		Snapshot: &Snapshot{
 			SnapshotID: snapshotID,
 			SubVolume:  vol,
 		},
-		conn: conn,
+		clusterID:      clusterID,
+		clusterName:    clusterName,
+		enableMetadata: setMetadata,
+		conn:           conn,
 	}
 }
 

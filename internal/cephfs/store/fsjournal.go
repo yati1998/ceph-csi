@@ -78,6 +78,8 @@ func CheckVolExists(ctx context.Context,
 	pvID *VolumeIdentifier,
 	sID *SnapshotIdentifier,
 	cr *util.Credentials,
+	clusterName string,
+	setMetadata bool,
 ) (*VolumeIdentifier, error) {
 	var vid VolumeIdentifier
 	// Connect to cephfs' default radosNamespace (csi)
@@ -99,7 +101,7 @@ func CheckVolExists(ctx context.Context,
 	vid.FsSubvolName = imageData.ImageAttributes.ImageName
 	volOptions.VolID = vid.FsSubvolName
 
-	vol := core.NewSubVolume(volOptions.conn, &volOptions.SubVolume, volOptions.ClusterID)
+	vol := core.NewSubVolume(volOptions.conn, &volOptions.SubVolume, volOptions.ClusterID, clusterName, setMetadata)
 	if (sID != nil || pvID != nil) && imageData.ImageAttributes.BackingSnapshotID == "" {
 		cloneState, cloneStateErr := vol.GetCloneState(ctx)
 		if cloneStateErr != nil {
@@ -376,6 +378,8 @@ func CheckSnapExists(
 	ctx context.Context,
 	volOptions *VolumeOptions,
 	snap *SnapshotOption,
+	clusterName string,
+	setMetadata bool,
 	cr *util.Credentials,
 ) (*SnapshotIdentifier, *core.SnapshotInfo, error) {
 	// Connect to cephfs' default radosNamespace (csi)
@@ -397,7 +401,8 @@ func CheckSnapExists(
 	snapUUID := snapData.ImageUUID
 	snapID := snapData.ImageAttributes.ImageName
 	sid.FsSnapshotName = snapData.ImageAttributes.ImageName
-	snapClient := core.NewSnapshot(volOptions.conn, snapID, &volOptions.SubVolume)
+	snapClient := core.NewSnapshot(volOptions.conn, snapID,
+		volOptions.ClusterID, clusterName, setMetadata, &volOptions.SubVolume)
 	snapInfo, err := snapClient.GetSnapshotInfo(ctx)
 	if err != nil {
 		if errors.Is(err, cerrors.ErrSnapNotFound) {

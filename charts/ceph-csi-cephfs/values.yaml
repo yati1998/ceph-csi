@@ -33,7 +33,10 @@ csiConfig: []
 # Set logging level for csi containers.
 # Supported values from 0 to 5. 0 for general useful logs,
 # 5 for trace level verbosity.
+# logLevel is the variable for CSI driver containers's log level
 logLevel: 5
+# sidecarLogLevel is the variable for Kubernetes sidecar container's log level
+sidecarLogLevel: 1
 
 nodeplugin:
   name: nodeplugin
@@ -125,6 +128,8 @@ provisioner:
       maxUnavailable: 50%
   # Timeout for waiting for creation or deletion of a volume
   timeout: 60s
+  # cluster name to set on the subvolume
+  # clustername: "k8s-cluster-1"
 
   # set user created priorityclassName for csi provisioner pods. default is
   # system-cluster-critical which is less priority than system-node-critical
@@ -174,6 +179,9 @@ provisioner:
       tag: v3.2.1
       pullPolicy: IfNotPresent
     resources: {}
+
+  # set metadata on volume
+  setmetadata: true
 
   resizer:
     name: resizer

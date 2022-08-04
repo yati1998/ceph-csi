@@ -72,13 +72,20 @@ type SubVolumeClient interface {
 	CreateCloneFromSnapshot(ctx context.Context, snap Snapshot) error
 	// CleanupSnapshotFromSubvolume removes the snapshot from the subvolume.
 	CleanupSnapshotFromSubvolume(ctx context.Context, parentVol *SubVolume) error
+
+	// SetAllMetadata set all the metadata from arg parameters on Ssubvolume.
+	SetAllMetadata(parameters map[string]string) error
+	// UnsetAllMetadata unset all the metadata from arg keys on subvolume.
+	UnsetAllMetadata(keys []string) error
 }
 
 // subVolumeClient implements SubVolumeClient interface.
 type subVolumeClient struct {
-	*SubVolume                         // Embedded SubVolume struct.
-	clusterID  string                  // Cluster ID to check subvolumegroup and resize functionality.
-	conn       *util.ClusterConnection // Cluster connection.
+	*SubVolume                             // Embedded SubVolume struct.
+	clusterID      string                  // Cluster ID to check subvolumegroup and resize functionality.
+	clusterName    string                  // Cluster name
+	enableMetadata bool                    // Set metadata on volume
+	conn           *util.ClusterConnection // Cluster connection.
 }
 
 // SubVolume holds the information about the subvolume.
@@ -92,11 +99,19 @@ type SubVolume struct {
 }
 
 // NewSubVolume returns a new subvolume client.
-func NewSubVolume(conn *util.ClusterConnection, vol *SubVolume, clusterID string) SubVolumeClient {
+func NewSubVolume(
+	conn *util.ClusterConnection,
+	vol *SubVolume,
+	clusterID,
+	clusterName string,
+	setMetadata bool,
+) SubVolumeClient {
 	return &subVolumeClient{
-		SubVolume: vol,
-		clusterID: clusterID,
-		conn:      conn,
+		SubVolume:      vol,
+		clusterID:      clusterID,
+		clusterName:    clusterName,
+		enableMetadata: setMetadata,
+		conn:           conn,
 	}
 }
 
@@ -184,7 +199,9 @@ const (
 type localClusterState struct {
 	// set the enum value i.e., unknown, supported,
 	// unsupported as per the state of the cluster.
-	resizeState operationState
+	resizeState                 operationState
+	subVolMetadataState         operationState
+	subVolSnapshotMetadataState operationState
 	// set true once a subvolumegroup is created
 	// for corresponding cluster.
 	subVolumeGroupCreated bool

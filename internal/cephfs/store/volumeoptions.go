@@ -196,7 +196,12 @@ func fmtBackingSnapshotOptionMismatch(optName, expected, actual string) error {
 
 // NewVolumeOptions generates a new instance of volumeOptions from the provided
 // CSI request parameters.
-func NewVolumeOptions(ctx context.Context, requestName string, req *csi.CreateVolumeRequest,
+func NewVolumeOptions(
+	ctx context.Context,
+	requestName,
+	clusterName string,
+	setMetadata bool,
+	req *csi.CreateVolumeRequest,
 	cr *util.Credentials,
 ) (*VolumeOptions, error) {
 	var (
@@ -289,7 +294,7 @@ func NewVolumeOptions(ctx context.Context, requestName string, req *csi.CreateVo
 
 		opts.BackingSnapshotID = req.GetVolumeContentSource().GetSnapshot().GetSnapshotId()
 
-		err = opts.populateVolumeOptionsFromBackingSnapshot(ctx, cr)
+		err = opts.populateVolumeOptionsFromBackingSnapshot(ctx, cr, clusterName, setMetadata)
 		if err != nil {
 			return nil, err
 		}
@@ -304,6 +309,8 @@ func NewVolumeOptionsFromVolID(
 	ctx context.Context,
 	volID string,
 	volOpt, secrets map[string]string,
+	clusterName string,
+	setMetadata bool,
 ) (*VolumeOptions, *VolumeIdentifier, error) {
 	var (
 		vi         util.CSIIdentifier
@@ -407,16 +414,20 @@ func NewVolumeOptionsFromVolID(
 	volOptions.SubVolume.VolID = vid.FsSubvolName
 
 	if volOptions.BackingSnapshot {
-		err = volOptions.populateVolumeOptionsFromBackingSnapshot(ctx, cr)
+		err = volOptions.populateVolumeOptionsFromBackingSnapshot(ctx, cr, clusterName, setMetadata)
 	} else {
-		err = volOptions.populateVolumeOptionsFromSubvolume(ctx)
+		err = volOptions.populateVolumeOptionsFromSubvolume(ctx, clusterName, setMetadata)
 	}
 
 	return &volOptions, &vid, err
 }
 
-func (vo *VolumeOptions) populateVolumeOptionsFromSubvolume(ctx context.Context) error {
-	vol := core.NewSubVolume(vo.conn, &vo.SubVolume, vo.ClusterID)
+func (vo *VolumeOptions) populateVolumeOptionsFromSubvolume(
+	ctx context.Context,
+	clusterName string,
+	setMetadata bool,
+) error {
+	vol := core.NewSubVolume(vo.conn, &vo.SubVolume, vo.ClusterID, clusterName, setMetadata)
 
 	var info *core.Subvolume
 	info, err := vol.GetSubVolumeInfo(ctx)
@@ -436,6 +447,8 @@ func (vo *VolumeOptions) populateVolumeOptionsFromSubvolume(ctx context.Context)
 func (vo *VolumeOptions) populateVolumeOptionsFromBackingSnapshot(
 	ctx context.Context,
 	cr *util.Credentials,
+	clusterName string,
+	setMetadata bool,
 ) error {
 	// As of CephFS snapshot v2 API, snapshots may be found in two locations:
 	//
@@ -457,7 +470,8 @@ func (vo *VolumeOptions) populateVolumeOptionsFromBackingSnapshot(
 		return nil
 	}
 
-	parentBackingSnapVolOpts, _, snapID, err := NewSnapshotOptionsFromID(ctx, vo.BackingSnapshotID, cr)
+	parentBackingSnapVolOpts, _, snapID, err := NewSnapshotOptionsFromID(ctx,
+		vo.BackingSnapshotID, cr, clusterName, setMetadata)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve backing snapshot %s: %w", vo.BackingSnapshotID, err)
 	}
@@ -652,6 +666,8 @@ func NewSnapshotOptionsFromID(
 	ctx context.Context,
 	snapID string,
 	cr *util.Credentials,
+	clusterName string,
+	setMetadata bool,
 ) (*VolumeOptions, *core.SnapshotInfo, *SnapshotIdentifier, error) {
 	var (
 		vi         util.CSIIdentifier
@@ -723,7 +739,7 @@ func NewSnapshotOptionsFromID(
 	sid.FsSubvolName = imageAttributes.SourceName
 
 	volOptions.SubVolume.VolID = sid.FsSubvolName
-	vol := core.NewSubVolume(volOptions.conn, &volOptions.SubVolume, volOptions.ClusterID)
+	vol := core.NewSubVolume(volOptions.conn, &volOptions.SubVolume, volOptions.ClusterID, clusterName, setMetadata)
 
 	subvolInfo, err := vol.GetSubVolumeInfo(ctx)
 	if err != nil {
@@ -732,7 +748,8 @@ func NewSnapshotOptionsFromID(
 	volOptions.Features = subvolInfo.Features
 	volOptions.Size = subvolInfo.BytesQuota
 	volOptions.RootPath = subvolInfo.Path
-	snap := core.NewSnapshot(volOptions.conn, sid.FsSnapshotName, &volOptions.SubVolume)
+	snap := core.NewSnapshot(volOptions.conn, sid.FsSnapshotName,
+		volOptions.ClusterID, clusterName, setMetadata, &volOptions.SubVolume)
 	info, err := snap.GetSnapshotInfo(ctx)
 	if err != nil {
 		return &volOptions, nil, &sid, err

@@ -43,13 +43,11 @@ spec:
           image: registry.k8s.io/sig-storage/csi-provisioner:v3.2.1
           args:
             - "--csi-address=$(ADDRESS)"
-            - "--v=5"
+            - "--v=1"
             - "--timeout=150s"
             - "--leader-election=true"
             - "--retry-interval-start=500ms"
-            # TODO: enable the feature-gate once error has been handled in nfs.
-            # Issue #3230
-            # - "--feature-gates=HonorPVReclaimPolicy=true"
+            - "--feature-gates=HonorPVReclaimPolicy=true"
             - "--prevent-volume-mode-conversion=true"
           env:
             - name: ADDRESS
@@ -62,7 +60,7 @@ spec:
           image: registry.k8s.io/sig-storage/csi-resizer:v1.5.0
           args:
             - "--csi-address=$(ADDRESS)"
-            - "--v=5"
+            - "--v=1"
             - "--timeout=150s"
             - "--leader-election"
             - "--retry-interval-start=500ms"
@@ -78,7 +76,7 @@ spec:
           image: registry.k8s.io/sig-storage/csi-snapshotter:v6.0.1
           args:
             - "--csi-address=$(ADDRESS)"
-            - "--v=5"
+            - "--v=1"
             - "--timeout=150s"
             - "--leader-election=true"
           env:

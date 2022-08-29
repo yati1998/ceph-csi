@@ -25,7 +25,7 @@ import (
 
 	"github.com/ceph/ceph-csi/internal/util"
 
-	. "github.com/onsi/ginkgo" // nolint
+	. "github.com/onsi/ginkgo/v2" // nolint
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -38,10 +38,8 @@ import (
 var (
 	rbdProvisioner     = "csi-rbdplugin-provisioner.yaml"
 	rbdProvisionerRBAC = "csi-provisioner-rbac.yaml"
-	rbdProvisionerPSP  = "csi-provisioner-psp.yaml"
 	rbdNodePlugin      = "csi-rbdplugin.yaml"
 	rbdNodePluginRBAC  = "csi-nodeplugin-rbac.yaml"
-	rbdNodePluginPSP   = "csi-nodeplugin-psp.yaml"
 	configMap          = "csi-config-map.yaml"
 	cephConfconfigMap  = "ceph-conf.yaml"
 	csiDriverObject    = "csidriver.yaml"
@@ -145,10 +143,6 @@ func createORDeleteRbdResources(action kubectlAction) {
 			filename:  rbdDirPath + rbdProvisionerRBAC,
 			namespace: cephCSINamespace,
 		},
-		&yamlResourceNamespaced{
-			filename:  rbdDirPath + rbdProvisionerPSP,
-			namespace: cephCSINamespace,
-		},
 		// the provisioner itself
 		&yamlResourceNamespaced{
 			filename:       rbdDirPath + rbdProvisioner,
@@ -159,10 +153,6 @@ func createORDeleteRbdResources(action kubectlAction) {
 		// dependencies for the node-plugin
 		&yamlResourceNamespaced{
 			filename:  rbdDirPath + rbdNodePluginRBAC,
-			namespace: cephCSINamespace,
-		},
-		&yamlResourceNamespaced{
-			filename:  rbdDirPath + rbdNodePluginPSP,
 			namespace: cephCSINamespace,
 		},
 		// the node-plugin itself

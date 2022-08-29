@@ -23,7 +23,7 @@ import (
 	"sync"
 
 	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
-	. "github.com/onsi/ginkgo" // nolint
+	. "github.com/onsi/ginkgo/v2" // nolint
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
@@ -34,10 +34,8 @@ import (
 var (
 	cephFSProvisioner     = "csi-cephfsplugin-provisioner.yaml"
 	cephFSProvisionerRBAC = "csi-provisioner-rbac.yaml"
-	cephFSProvisionerPSP  = "csi-provisioner-psp.yaml"
 	cephFSNodePlugin      = "csi-cephfsplugin.yaml"
 	cephFSNodePluginRBAC  = "csi-nodeplugin-rbac.yaml"
-	cephFSNodePluginPSP   = "csi-nodeplugin-psp.yaml"
 	cephFSDeploymentName  = "csi-cephfsplugin-provisioner"
 	cephFSDeamonSetName   = "csi-cephfsplugin"
 	cephFSContainerName   = "csi-cephfsplugin"
@@ -83,10 +81,6 @@ func createORDeleteCephfsResources(action kubectlAction) {
 			filename:  cephFSDirPath + cephFSProvisionerRBAC,
 			namespace: cephCSINamespace,
 		},
-		&yamlResourceNamespaced{
-			filename:  cephFSDirPath + cephFSProvisionerPSP,
-			namespace: cephCSINamespace,
-		},
 		// the provisioner itself
 		&yamlResourceNamespaced{
 			filename:   cephFSDirPath + cephFSProvisioner,
@@ -96,10 +90,6 @@ func createORDeleteCephfsResources(action kubectlAction) {
 		// dependencies for the node-plugin
 		&yamlResourceNamespaced{
 			filename:  cephFSDirPath + cephFSNodePluginRBAC,
-			namespace: cephCSINamespace,
-		},
-		&yamlResourceNamespaced{
-			filename:  cephFSDirPath + cephFSNodePluginPSP,
 			namespace: cephCSINamespace,
 		},
 		// the node-plugin itself

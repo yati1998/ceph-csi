@@ -49,7 +49,7 @@ GO_PROJECT=github.com/ceph/ceph-csi
 CEPH_VERSION ?= $(shell . $(CURDIR)/build.env ; echo $${CEPH_VERSION})
 # TODO: ceph_preview tag may be removed with go-ceph 0.17.0
 # TODO: ceph_ci_untested is added for subvolume metadata (go-ceph#691) and snapshot metadata management (go-ceph#698)
-GO_TAGS_LIST ?= $(CEPH_VERSION) ceph_preview ceph_ci_untested
+GO_TAGS_LIST ?= $(CEPH_VERSION) ceph_preview ceph_ci_untested ceph_pre_quincy
 
 # go build flags
 LDFLAGS ?=
@@ -184,7 +184,7 @@ run-e2e: NAMESPACE ?= cephcsi-e2e-$(shell uuidgen | cut -d- -f1)
 run-e2e:
 	@test -e e2e.test || $(MAKE) e2e.test
 	cd e2e && \
-	../e2e.test -test.v -test.timeout="${E2E_TIMEOUT}" --deploy-timeout="${DEPLOY_TIMEOUT}" --cephcsi-namespace=$(NAMESPACE) $(E2E_ARGS)
+	../e2e.test -test.v -ginkgo.timeout="${E2E_TIMEOUT}" --deploy-timeout="${DEPLOY_TIMEOUT}" --cephcsi-namespace=$(NAMESPACE) $(E2E_ARGS)
 
 .container-cmd:
 	@test -n "$(shell which $(CONTAINER_CMD) 2>/dev/null)" || { echo "Missing container support, install Podman or Docker"; exit 1; }

@@ -36,7 +36,7 @@ const (
 
 	// Passphrase size - 20 bytes is 160 bits to satisfy:
 	// https://tools.ietf.org/html/rfc6749#section-10.10
-	encryptionPassphraseSize = 20
+	defaultEncryptionPassphraseSize = 20
 )
 
 var (
@@ -78,6 +78,68 @@ func FetchEncryptionKMSID(encrypted, kmsID string) (string, error) {
 	}
 
 	return kmsID, nil
+}
+
+type EncryptionType int
+
+const (
+	// EncryptionTypeInvalid signals invalid or unsupported configuration.
+	EncryptionTypeInvalid EncryptionType = iota
+	// EncryptionTypeNone disables encryption.
+	EncryptionTypeNone
+	// EncryptionTypeBlock enables block encryption.
+	EncryptionTypeBlock
+	// EncryptionTypeBlock enables file encryption (fscrypt).
+	EncryptionTypeFile
+)
+
+const (
+	encryptionTypeBlockString = "block"
+	encryptionTypeFileString  = "file"
+)
+
+func ParseEncryptionType(typeStr string) EncryptionType {
+	switch typeStr {
+	case encryptionTypeBlockString:
+		return EncryptionTypeBlock
+	case encryptionTypeFileString:
+		return EncryptionTypeFile
+	case "":
+		return EncryptionTypeNone
+	default:
+		return EncryptionTypeInvalid
+	}
+}
+
+func EncryptionTypeString(encType EncryptionType) string {
+	switch encType {
+	case EncryptionTypeBlock:
+		return encryptionTypeBlockString
+	case EncryptionTypeFile:
+		return encryptionTypeFileString
+	case EncryptionTypeNone:
+		return ""
+	case EncryptionTypeInvalid:
+		return "INVALID"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// FetchEncryptionType returns encryptionType specified in volOptions.
+// If not specified, use fallback. If specified but invalid, return
+// invalid.
+func FetchEncryptionType(volOptions map[string]string, fallback EncryptionType) EncryptionType {
+	encType, ok := volOptions["encryptionType"]
+	if !ok {
+		return fallback
+	}
+
+	if encType == "" {
+		return EncryptionTypeInvalid
+	}
+
+	return ParseEncryptionType(encType)
 }
 
 // NewVolumeEncryption creates a new instance of VolumeEncryption and
@@ -156,8 +218,8 @@ func (ve *VolumeEncryption) StoreCryptoPassphrase(volumeID, passphrase string) e
 }
 
 // StoreNewCryptoPassphrase generates a new passphrase and saves it in the KMS.
-func (ve *VolumeEncryption) StoreNewCryptoPassphrase(volumeID string) error {
-	passphrase, err := generateNewEncryptionPassphrase()
+func (ve *VolumeEncryption) StoreNewCryptoPassphrase(volumeID string, length int) error {
+	passphrase, err := generateNewEncryptionPassphrase(length)
 	if err != nil {
 		return fmt.Errorf("failed to generate passphrase for %s: %w", volumeID, err)
 	}
@@ -176,8 +238,8 @@ func (ve *VolumeEncryption) GetCryptoPassphrase(volumeID string) (string, error)
 }
 
 // generateNewEncryptionPassphrase generates a random passphrase for encryption.
-func generateNewEncryptionPassphrase() (string, error) {
-	bytesPassphrase := make([]byte, encryptionPassphraseSize)
+func generateNewEncryptionPassphrase(length int) (string, error) {
+	bytesPassphrase := make([]byte, length)
 	_, err := rand.Read(bytesPassphrase)
 	if err != nil {
 		return "", err

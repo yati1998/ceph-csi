@@ -118,6 +118,7 @@ type rbdImage struct {
 	ParentPool string
 	// Cluster name
 	ClusterName string
+
 	// Owner is the creator (tenant, Kubernetes Namespace) of the volume
 	Owner string
 
@@ -130,9 +131,14 @@ type rbdImage struct {
 	ObjectSize  uint64
 
 	ImageFeatureSet librbd.FeatureSet
-	// encryption provides access to optional VolumeEncryption functions
-	encryption *util.VolumeEncryption
-	CreatedAt  *timestamp.Timestamp
+
+	// blockEncryption provides access to optional VolumeEncryption functions (e.g LUKS)
+	blockEncryption *util.VolumeEncryption
+	// fileEncryption provides access to optional VolumeEncryption functions (e.g fscrypt)
+	fileEncryption *util.VolumeEncryption
+
+	CreatedAt *timestamp.Timestamp
+
 	// conn is a connection to the Ceph cluster obtained from a ConnPool
 	conn *util.ClusterConnection
 	// an opened IOContext, call .openIoctx() before using
@@ -384,8 +390,11 @@ func (ri *rbdImage) Destroy() {
 	if ri.conn != nil {
 		ri.conn.Destroy()
 	}
-	if ri.isEncrypted() {
-		ri.encryption.Destroy()
+	if ri.isBlockEncrypted() {
+		ri.blockEncryption.Destroy()
+	}
+	if ri.isFileEncrypted() {
+		ri.fileEncryption.Destroy()
 	}
 }
 
@@ -438,8 +447,8 @@ func createImage(ctx context.Context, pOpts *rbdVolume, cr *util.Credentials) er
 		return fmt.Errorf("failed to create rbd image: %w", err)
 	}
 
-	if pOpts.isEncrypted() {
-		err = pOpts.setupEncryption(ctx)
+	if pOpts.isBlockEncrypted() {
+		err = pOpts.setupBlockEncryption(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to setup encryption for image %s: %w", pOpts, err)
 		}
@@ -624,10 +633,17 @@ func (ri *rbdImage) deleteImage(ctx context.Context) error {
 		return err
 	}
 
-	if ri.isEncrypted() {
-		log.DebugLog(ctx, "rbd: going to remove DEK for %q", ri)
-		if err = ri.encryption.RemoveDEK(ri.VolID); err != nil {
-			log.WarningLog(ctx, "failed to clean the passphrase for volume %s: %s", ri.VolID, err)
+	if ri.isBlockEncrypted() {
+		log.DebugLog(ctx, "rbd: going to remove DEK for %q (block encryption)", ri)
+		if err = ri.blockEncryption.RemoveDEK(ri.VolID); err != nil {
+			log.WarningLog(ctx, "failed to clean the passphrase for volume %s (block encryption): %s", ri.VolID, err)
+		}
+	}
+
+	if ri.isFileEncrypted() {
+		log.DebugLog(ctx, "rbd: going to remove DEK for %q (file encryption)", ri)
+		if err = ri.fileEncryption.RemoveDEK(ri.VolID); err != nil {
+			log.WarningLog(ctx, "failed to clean the passphrase for volume %s (file encryption): %s", ri.VolID, err)
 		}
 	}
 
@@ -1008,10 +1024,17 @@ func genSnapFromSnapID(
 			rbdSnap, err)
 	}
 
-	if imageAttributes.KmsID != "" {
-		err = rbdSnap.configureEncryption(imageAttributes.KmsID, secrets)
+	if imageAttributes.KmsID != "" && imageAttributes.EncryptionType == util.EncryptionTypeBlock {
+		err = rbdSnap.configureBlockEncryption(imageAttributes.KmsID, secrets)
 		if err != nil {
-			return fmt.Errorf("failed to configure encryption for "+
+			return fmt.Errorf("failed to configure block encryption for "+
+				"%q: %w", rbdSnap, err)
+		}
+	}
+	if imageAttributes.KmsID != "" && imageAttributes.EncryptionType == util.EncryptionTypeFile {
+		err = rbdSnap.configureFileEncryption(imageAttributes.KmsID, secrets)
+		if err != nil {
+			return fmt.Errorf("failed to configure file encryption for "+
 				"%q: %w", rbdSnap, err)
 		}
 	}
@@ -1103,8 +1126,14 @@ func generateVolumeFromVolumeID(
 	rbdVol.ImageID = imageAttributes.ImageID
 	rbdVol.Owner = imageAttributes.Owner
 
-	if imageAttributes.KmsID != "" {
-		err = rbdVol.configureEncryption(imageAttributes.KmsID, secrets)
+	if imageAttributes.KmsID != "" && imageAttributes.EncryptionType == util.EncryptionTypeBlock {
+		err = rbdVol.configureBlockEncryption(imageAttributes.KmsID, secrets)
+		if err != nil {
+			return rbdVol, err
+		}
+	}
+	if imageAttributes.KmsID != "" && imageAttributes.EncryptionType == util.EncryptionTypeFile {
+		err = rbdVol.configureFileEncryption(imageAttributes.KmsID, secrets)
 		if err != nil {
 			return rbdVol, err
 		}
@@ -1681,7 +1710,7 @@ func stashRBDImageMetadata(volOptions *rbdVolume, metaDataPath string) error {
 		Pool:           volOptions.Pool,
 		RadosNamespace: volOptions.RadosNamespace,
 		ImageName:      volOptions.RbdImageName,
-		Encrypted:      volOptions.isEncrypted(),
+		Encrypted:      volOptions.isBlockEncrypted(),
 		UnmapOptions:   volOptions.UnmapOptions,
 	}
 
@@ -1961,11 +1990,13 @@ func (ri *rbdImage) getOrigSnapName(snapID uint64) (string, error) {
 }
 
 func (ri *rbdImage) isCompatibleEncryption(dst *rbdImage) error {
+	riEncrypted := ri.isBlockEncrypted() || ri.isFileEncrypted()
+	dstEncrypted := dst.isBlockEncrypted() || dst.isFileEncrypted()
 	switch {
-	case ri.isEncrypted() && !dst.isEncrypted():
+	case riEncrypted && !dstEncrypted:
 		return fmt.Errorf("cannot create unencrypted volume from encrypted volume %q", ri)
 
-	case !ri.isEncrypted() && dst.isEncrypted():
+	case !riEncrypted && dstEncrypted:
 		return fmt.Errorf("cannot create encrypted volume from unencrypted volume %q", ri)
 	}
 

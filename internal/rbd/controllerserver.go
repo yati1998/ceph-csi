@@ -384,7 +384,11 @@ func (cs *ControllerServer) CreateVolume(
 	metadata := k8s.GetVolumeMetadata(req.GetParameters())
 	err = rbdVol.setAllMetadata(metadata)
 	if err != nil {
-		return nil, err
+		if deleteErr := rbdVol.deleteImage(ctx); deleteErr != nil {
+			log.ErrorLog(ctx, "failed to delete rbd image: %s with error: %v", rbdVol, deleteErr)
+		}
+
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	return buildCreateVolumeResponse(req, rbdVol), nil
@@ -1556,7 +1560,7 @@ func (cs *ControllerServer) ControllerExpandVolume(
 	// 2. Block VolumeMode with Encryption
 	// Hence set nodeExpansion flag based on VolumeMode and Encryption status
 	nodeExpansion := true
-	if req.GetVolumeCapability().GetBlock() != nil && !rbdVol.isEncrypted() {
+	if req.GetVolumeCapability().GetBlock() != nil && !rbdVol.isBlockEncrypted() {
 		nodeExpansion = false
 	}
 

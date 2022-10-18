@@ -27,6 +27,7 @@ import (
 	csicommon "github.com/ceph/ceph-csi/internal/csi-common"
 	"github.com/ceph/ceph-csi/internal/journal"
 	"github.com/ceph/ceph-csi/internal/util"
+	"github.com/ceph/ceph-csi/internal/util/fscrypt"
 	"github.com/ceph/ceph-csi/internal/util/log"
 
 	librbd "github.com/ceph/go-ceph/rbd"
@@ -55,8 +56,8 @@ type stageTransaction struct {
 	isStagePathCreated bool
 	// isMounted represents if the volume was mounted or not
 	isMounted bool
-	// isEncrypted represents if the volume was encrypted or not
-	isEncrypted bool
+	// isBlockEncrypted represents if the volume was encrypted or not
+	isBlockEncrypted bool
 	// devicePath represents the path where rbd device is mapped
 	devicePath string
 }
@@ -425,12 +426,18 @@ func (ns *NodeServer) stageTransaction(
 		}
 	}
 
-	if volOptions.isEncrypted() {
+	if volOptions.isBlockEncrypted() {
 		devicePath, err = ns.processEncryptedDevice(ctx, volOptions, devicePath)
 		if err != nil {
 			return transaction, err
 		}
-		transaction.isEncrypted = true
+		transaction.isBlockEncrypted = true
+	}
+
+	if volOptions.isFileEncrypted() {
+		if err = fscrypt.InitializeNode(ctx); err != nil {
+			return transaction, fmt.Errorf("file encryption setup for %s failed: %w", volOptions.VolID, err)
+		}
 	}
 
 	stagingTargetPath := getStagingTargetPath(req)
@@ -444,11 +451,20 @@ func (ns *NodeServer) stageTransaction(
 	transaction.isStagePathCreated = true
 
 	// nodeStage Path
-	err = ns.mountVolumeToStagePath(ctx, req, staticVol, stagingTargetPath, devicePath)
+	err = ns.mountVolumeToStagePath(ctx, req, staticVol, stagingTargetPath, devicePath, volOptions.isFileEncrypted())
 	if err != nil {
 		return transaction, err
 	}
 	transaction.isMounted = true
+
+	if volOptions.isFileEncrypted() {
+		log.DebugLog(ctx, "rbd fscrypt: trying to unlock filesystem on %s image %s", stagingTargetPath, volOptions.VolID)
+		err = fscrypt.Unlock(ctx, volOptions.fileEncryption, stagingTargetPath, volOptions.VolID)
+		if err != nil {
+			return transaction, fmt.Errorf("file system encryption unlock in %s image %s failed: %w",
+				stagingTargetPath, volOptions.VolID, err)
+		}
+	}
 
 	// As we are supporting the restore of a volume to a bigger size and
 	// creating bigger size clone from a volume, we need to check filesystem
@@ -475,13 +491,13 @@ func resizeNodeStagePath(ctx context.Context,
 	var ok bool
 
 	// if its a non encrypted block device we dont need any expansion
-	if isBlock && !transaction.isEncrypted {
+	if isBlock && !transaction.isBlockEncrypted {
 		return nil
 	}
 
 	resizer := mount.NewResizeFs(utilexec.New())
 
-	if transaction.isEncrypted {
+	if transaction.isBlockEncrypted {
 		devicePath, err = resizeEncryptedDevice(ctx, volID, stagingTargetPath, devicePath)
 		if err != nil {
 			return status.Error(codes.Internal, err.Error())
@@ -611,7 +627,7 @@ func (ns *NodeServer) undoStagingTransaction(
 
 	// Unmapping rbd device
 	if transaction.devicePath != "" {
-		err = detachRBDDevice(ctx, transaction.devicePath, volID, volOptions.UnmapOptions, transaction.isEncrypted)
+		err = detachRBDDevice(ctx, transaction.devicePath, volID, volOptions.UnmapOptions, transaction.isBlockEncrypted)
 		if err != nil {
 			log.ErrorLog(
 				ctx,
@@ -691,6 +707,17 @@ func (ns *NodeServer) NodePublishVolume(
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
+	fileEncrypted, err := IsFileEncrypted(ctx, req.GetVolumeContext())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if fileEncrypted {
+		stagingPath = fscrypt.AppendEncyptedSubdirectory(stagingPath)
+		if err = fscrypt.IsDirectoryUnlocked(stagingPath, req.GetVolumeCapability().GetMount().GetFsType()); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+
 	// Publish Path
 	err = ns.mountVolume(ctx, stagingPath, req)
 	if err != nil {
@@ -707,6 +734,7 @@ func (ns *NodeServer) mountVolumeToStagePath(
 	req *csi.NodeStageVolumeRequest,
 	staticVol bool,
 	stagingPath, devicePath string,
+	fileEncryption bool,
 ) error {
 	readOnly := false
 	fsType := req.GetVolumeCapability().GetMount().GetFsType()
@@ -751,7 +779,11 @@ func (ns *NodeServer) mountVolumeToStagePath(
 		args := []string{}
 		switch fsType {
 		case "ext4":
-			args = []string{"-m0", "-Enodiscard,lazy_itable_init=1,lazy_journal_init=1", devicePath}
+			args = []string{"-m0", "-Enodiscard,lazy_itable_init=1,lazy_journal_init=1"}
+			if fileEncryption {
+				args = append(args, "-Oencrypt")
+			}
+			args = append(args, devicePath)
 		case "xfs":
 			args = []string{"-K", devicePath}
 			// always disable reflink
@@ -1146,7 +1178,7 @@ func (ns *NodeServer) processEncryptedDevice(
 		// CreateVolume.
 		// Use the same setupEncryption() as CreateVolume does, and
 		// continue with the common process to crypt-format the device.
-		err = volOptions.setupEncryption(ctx)
+		err = volOptions.setupBlockEncryption(ctx)
 		if err != nil {
 			log.ErrorLog(ctx, "failed to setup encryption for rbd"+
 				"image %s: %v", imageSpec, err)

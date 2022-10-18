@@ -232,6 +232,24 @@ func checkClusternameInMetadata(f *framework.Framework, ns, pool, image string) 
 	}
 }
 
+// ByFileAndBlockEncryption wraps ginkgo's By to run the test body using file and block encryption specific validators.
+func ByFileAndBlockEncryption(
+	text string,
+	callback func(validator encryptionValidateFunc, pvcValidator validateFunc, encryptionType util.EncryptionType),
+) {
+	By(text+" (block)", func() {
+		callback(validateEncryptedPVCAndAppBinding, isBlockEncryptedPVC, util.EncryptionTypeBlock)
+	})
+	By(text+" (file)", func() {
+		if !testRBDFSCrypt {
+			e2elog.Logf("skipping RBD fscrypt file encryption test")
+
+			return
+		}
+		callback(validateEncryptedFilesystemAndAppBinding, isFileEncryptedPVC, util.EncryptionTypeFile)
+	})
+}
+
 var _ = Describe("RBD", func() {
 	f := framework.NewDefaultFramework(rbdType)
 	var c clientset.Interface
@@ -989,7 +1007,8 @@ var _ = Describe("RBD", func() {
 					noKMS, noKMS,
 					defaultSCName,
 					erasureCodedPool,
-					f)
+					f,
+					noPVCValidation)
 			})
 
 			By("create an erasure coded PVC and validate PVC-PVC clone", func() {
@@ -1871,13 +1890,14 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("create a PVC and bind it to an app using rbd-nbd mounter with encryption", func() {
+			ByFileAndBlockEncryption("create a PVC and bind it to an app using rbd-nbd mounter with encryption", func(
+				validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+			) {
 				if !testNBD {
 					e2elog.Logf("skipping NBD test")
 
 					return
 				}
-
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -1893,12 +1913,13 @@ var _ = Describe("RBD", func() {
 						"mapOptions":      nbdMapOptions,
 						"cephLogStrategy": e2eDefaultCephLogStrategy,
 						"encrypted":       "true",
+						"encryptionType":  util.EncryptionTypeString(encType),
 					},
 					deletePolicy)
 				if err != nil {
 					e2elog.Failf("failed to create storageclass: %v", err)
 				}
-				err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, noKMS, f)
+				err = validator(pvcPath, appPath, noKMS, f)
 				if err != nil {
 					e2elog.Failf("failed to validate encrypted pvc: %v", err)
 				}
@@ -1915,7 +1936,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("create a PVC and bind it to an app with encrypted RBD volume", func() {
+			ByFileAndBlockEncryption("create a PVC and bind it to an app with encrypted RBD volume", func(
+				validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -1925,12 +1948,12 @@ var _ = Describe("RBD", func() {
 					f,
 					defaultSCName,
 					nil,
-					map[string]string{"encrypted": "true"},
+					map[string]string{"encrypted": "true", "encryptionType": util.EncryptionTypeString(encType)},
 					deletePolicy)
 				if err != nil {
 					e2elog.Failf("failed to create storageclass: %v", err)
 				}
-				err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, noKMS, f)
+				err = validator(pvcPath, appPath, noKMS, f)
 				if err != nil {
 					e2elog.Failf("failed to validate encrypted pvc: %v", err)
 				}
@@ -1947,7 +1970,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("Resize Encrypted Block PVC and check Device size", func() {
+			ByFileAndBlockEncryption("Resize Encrypted Block PVC and check Device size", func(
+				validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -1957,7 +1982,7 @@ var _ = Describe("RBD", func() {
 					f,
 					defaultSCName,
 					nil,
-					map[string]string{"encrypted": "true"},
+					map[string]string{"encrypted": "true", "encryptionType": util.EncryptionTypeString(encType)},
 					deletePolicy)
 				if err != nil {
 					e2elog.Failf("failed to create storageclass: %v", err)
@@ -1972,15 +1997,16 @@ var _ = Describe("RBD", func() {
 				validateRBDImageCount(f, 0, defaultRBDPool)
 				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
 
-				// Block PVC resize
-				err = resizePVCAndValidateSize(rawPvcPath, rawAppPath, f)
-				if err != nil {
-					e2elog.Failf("failed to resize block PVC: %v", err)
+				if encType != util.EncryptionTypeFile {
+					// Block PVC resize
+					err = resizePVCAndValidateSize(rawPvcPath, rawAppPath, f)
+					if err != nil {
+						e2elog.Failf("failed to resize block PVC: %v", err)
+					}
+					// validate created backend rbd images
+					validateRBDImageCount(f, 0, defaultRBDPool)
+					validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
 				}
-				// validate created backend rbd images
-				validateRBDImageCount(f, 0, defaultRBDPool)
-				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
-
 				err = deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -1991,7 +2017,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("create a PVC and bind it to an app with encrypted RBD volume with VaultKMS", func() {
+			ByFileAndBlockEncryption("create a PVC and bind it to an app with encrypted RBD volume with VaultKMS", func(
+				validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -1999,12 +2027,13 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
 					e2elog.Failf("failed to create storageclass: %v", err)
 				}
-				err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, vaultKMS, f)
+				err = validator(pvcPath, appPath, vaultKMS, f)
 				if err != nil {
 					e2elog.Failf("failed to validate encrypted pvc: %v", err)
 				}
@@ -2021,7 +2050,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("create a PVC and bind it to an app with encrypted RBD volume with VaultTokensKMS", func() {
+			ByFileAndBlockEncryption("create a PVC and bind it to an app with encrypted RBD volume with VaultTokensKMS", func(
+				validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -2029,6 +2060,7 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-tokens-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2048,7 +2080,7 @@ var _ = Describe("RBD", func() {
 					e2elog.Failf("failed to create Secret with tenant token: %v", err)
 				}
 
-				err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, vaultTokensKMS, f)
+				err = validator(pvcPath, appPath, vaultTokensKMS, f)
 				if err != nil {
 					e2elog.Failf("failed to validate encrypted pvc: %v", err)
 				}
@@ -2072,7 +2104,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("create a PVC and bind it to an app with encrypted RBD volume with VaultTenantSA KMS", func() {
+			ByFileAndBlockEncryption("create a PVC and bind it to an app with encrypted RBD volume with VaultTenantSA KMS", func(
+				validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -2080,6 +2114,7 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-tenant-sa-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2092,7 +2127,7 @@ var _ = Describe("RBD", func() {
 				}
 				defer deleteTenantServiceAccount(f.UniqueName)
 
-				err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, vaultTenantSAKMS, f)
+				err = validator(pvcPath, appPath, vaultTenantSAKMS, f)
 				if err != nil {
 					e2elog.Failf("failed to validate encrypted pvc: %v", err)
 				}
@@ -2109,37 +2144,41 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("create a PVC and bind it to an app with encrypted RBD volume with SecretsMetadataKMS", func() {
-				err := deleteResource(rbdExamplePath + "storageclass.yaml")
-				if err != nil {
-					e2elog.Failf("failed to delete storageclass: %v", err)
-				}
-				scOpts := map[string]string{
-					"encrypted":       "true",
-					"encryptionKMSID": "secrets-metadata-test",
-				}
-				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
-				if err != nil {
-					e2elog.Failf("failed to create storageclass: %v", err)
-				}
-				err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, noKMS, f)
-				if err != nil {
-					e2elog.Failf("failed to validate encrypted pvc: %v", err)
-				}
-				// validate created backend rbd images
-				validateRBDImageCount(f, 0, defaultRBDPool)
-				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
-				err = deleteResource(rbdExamplePath + "storageclass.yaml")
-				if err != nil {
-					e2elog.Failf("failed to delete storageclass: %v", err)
-				}
-				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, nil, deletePolicy)
-				if err != nil {
-					e2elog.Failf("failed to create storageclass: %v", err)
-				}
-			})
+			ByFileAndBlockEncryption("create a PVC and bind it to an app with encrypted RBD volume with SecretsMetadataKMS",
+				func(validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType) {
+					err := deleteResource(rbdExamplePath + "storageclass.yaml")
+					if err != nil {
+						e2elog.Failf("failed to delete storageclass: %v", err)
+					}
+					scOpts := map[string]string{
+						"encrypted":       "true",
+						"encryptionKMSID": "secrets-metadata-test",
+						"encryptionType":  util.EncryptionTypeString(encType),
+					}
+					err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
+					if err != nil {
+						e2elog.Failf("failed to create storageclass: %v", err)
+					}
+					err = validator(pvcPath, appPath, noKMS, f)
+					if err != nil {
+						e2elog.Failf("failed to validate encrypted pvc: %v", err)
+					}
+					// validate created backend rbd images
+					validateRBDImageCount(f, 0, defaultRBDPool)
+					validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
+					err = deleteResource(rbdExamplePath + "storageclass.yaml")
+					if err != nil {
+						e2elog.Failf("failed to delete storageclass: %v", err)
+					}
+					err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, nil, deletePolicy)
+					if err != nil {
+						e2elog.Failf("failed to create storageclass: %v", err)
+					}
+				})
 
-			By("test RBD volume encryption with user secrets based SecretsMetadataKMS", func() {
+			ByFileAndBlockEncryption("test RBD volume encryption with user secrets based SecretsMetadataKMS", func(
+				validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -2147,6 +2186,7 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "user-ns-secrets-metadata-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2162,7 +2202,7 @@ var _ = Describe("RBD", func() {
 					e2elog.Failf("failed to create user Secret: %v", err)
 				}
 
-				err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, noKMS, f)
+				err = validator(pvcPath, appPath, noKMS, f)
 				if err != nil {
 					e2elog.Failf("failed to validate encrypted pvc: %v", err)
 				}
@@ -2190,9 +2230,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By(
+			ByFileAndBlockEncryption(
 				"test RBD volume encryption with user secrets based SecretsMetadataKMS with tenant namespace",
-				func() {
+				func(validator encryptionValidateFunc, isEncryptedPVC validateFunc, encType util.EncryptionType) {
 					err := deleteResource(rbdExamplePath + "storageclass.yaml")
 					if err != nil {
 						e2elog.Failf("failed to delete storageclass: %v", err)
@@ -2200,6 +2240,7 @@ var _ = Describe("RBD", func() {
 					scOpts := map[string]string{
 						"encrypted":       "true",
 						"encryptionKMSID": "user-secrets-metadata-test",
+						"encryptionType":  util.EncryptionTypeString(encType),
 					}
 					err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 					if err != nil {
@@ -2215,7 +2256,7 @@ var _ = Describe("RBD", func() {
 						e2elog.Failf("failed to create user Secret: %v", err)
 					}
 
-					err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, noKMS, f)
+					err = validator(pvcPath, appPath, noKMS, f)
 					if err != nil {
 						e2elog.Failf("failed to validate encrypted pvc: %v", err)
 					}
@@ -2298,7 +2339,8 @@ var _ = Describe("RBD", func() {
 					noKMS, noKMS,
 					defaultSCName,
 					noDataPool,
-					f)
+					f,
+					noPVCValidation)
 			})
 
 			By("create a PVC-PVC clone and bind it to an app", func() {
@@ -2315,7 +2357,9 @@ var _ = Describe("RBD", func() {
 					f)
 			})
 
-			By("create an encrypted PVC snapshot and restore it for an app with VaultKMS", func() {
+			ByFileAndBlockEncryption("create an encrypted PVC snapshot and restore it for an app with VaultKMS", func(
+				validator encryptionValidateFunc, isEncryptedPVC validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -2323,6 +2367,7 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2333,7 +2378,7 @@ var _ = Describe("RBD", func() {
 					pvcPath, appPath, snapshotPath, pvcClonePath, appClonePath,
 					vaultKMS, vaultKMS,
 					defaultSCName, noDataPool,
-					f)
+					f, isEncryptedPVC)
 
 				err = deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
@@ -2345,7 +2390,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("Validate PVC restore from vaultKMS to vaultTenantSAKMS", func() {
+			ByFileAndBlockEncryption("Validate PVC restore from vaultKMS to vaultTenantSAKMS", func(
+				validator encryptionValidateFunc, isEncryptedPVC validateFunc, encType util.EncryptionType,
+			) {
 				restoreSCName := "restore-sc"
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
@@ -2354,6 +2401,7 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2363,6 +2411,7 @@ var _ = Describe("RBD", func() {
 				scOpts = map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-tenant-sa-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, restoreSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2378,7 +2427,8 @@ var _ = Describe("RBD", func() {
 				validatePVCSnapshot(1,
 					pvcPath, appPath, snapshotPath, pvcClonePath, appClonePath,
 					vaultKMS, vaultTenantSAKMS,
-					restoreSCName, noDataPool, f)
+					restoreSCName, noDataPool, f,
+					isEncryptedPVC)
 
 				err = retryKubectlArgs(cephCSINamespace, kubectlDelete, deployTimeout, "storageclass", restoreSCName)
 				if err != nil {
@@ -2400,7 +2450,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("Validate PVC-PVC clone with different SC from vaultKMS to vaultTenantSAKMS", func() {
+			ByFileAndBlockEncryption("Validate PVC-PVC clone with different SC from vaultKMS to vaultTenantSAKMS", func(
+				validator encryptionValidateFunc, isValidPVC validateFunc, encType util.EncryptionType,
+			) {
 				restoreSCName := "restore-sc"
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
@@ -2409,6 +2461,7 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2418,6 +2471,7 @@ var _ = Describe("RBD", func() {
 				scOpts = map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-tenant-sa-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, restoreSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2438,7 +2492,7 @@ var _ = Describe("RBD", func() {
 					restoreSCName,
 					noDataPool,
 					secretsMetadataKMS,
-					isEncryptedPVC,
+					isValidPVC,
 					f)
 
 				err = retryKubectlArgs(cephCSINamespace, kubectlDelete, deployTimeout, "storageclass", restoreSCName)
@@ -2460,7 +2514,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("create an encrypted PVC-PVC clone and bind it to an app", func() {
+			ByFileAndBlockEncryption("create an encrypted PVC-PVC clone and bind it to an app", func(
+				validator encryptionValidateFunc, isValidPVC validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -2468,6 +2524,7 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "secrets-metadata-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2482,7 +2539,7 @@ var _ = Describe("RBD", func() {
 					defaultSCName,
 					noDataPool,
 					secretsMetadataKMS,
-					isEncryptedPVC,
+					isValidPVC,
 					f)
 
 				err = deleteResource(rbdExamplePath + "storageclass.yaml")
@@ -2495,7 +2552,9 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
-			By("create an encrypted PVC-PVC clone and bind it to an app with VaultKMS", func() {
+			ByFileAndBlockEncryption("create an encrypted PVC-PVC clone and bind it to an app with VaultKMS", func(
+				validator encryptionValidateFunc, isValidPVC validateFunc, encType util.EncryptionType,
+			) {
 				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
 					e2elog.Failf("failed to delete storageclass: %v", err)
@@ -2503,6 +2562,7 @@ var _ = Describe("RBD", func() {
 				scOpts := map[string]string{
 					"encrypted":       "true",
 					"encryptionKMSID": "vault-test",
+					"encryptionType":  util.EncryptionTypeString(encType),
 				}
 				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 				if err != nil {
@@ -2517,7 +2577,7 @@ var _ = Describe("RBD", func() {
 					defaultSCName,
 					noDataPool,
 					vaultKMS,
-					isEncryptedPVC,
+					isValidPVC,
 					f)
 
 				err = deleteResource(rbdExamplePath + "storageclass.yaml")
@@ -3992,10 +4052,13 @@ var _ = Describe("RBD", func() {
 					}
 				})
 
-				By("restore snapshot to bigger size encrypted PVC with VaultKMS", func() {
+				ByFileAndBlockEncryption("restore snapshot to bigger size encrypted PVC with VaultKMS", func(
+					_ encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+				) {
 					scOpts := map[string]string{
 						"encrypted":       "true",
 						"encryptionKMSID": "vault-test",
+						"encryptionType":  util.EncryptionTypeString(encType),
 					}
 					err := createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
 					if err != nil {
@@ -4027,15 +4090,17 @@ var _ = Describe("RBD", func() {
 					if err != nil {
 						e2elog.Failf("failed to validate restore bigger size clone: %v", err)
 					}
-					// validate block mode PVC
-					err = validateBiggerPVCFromSnapshot(f,
-						rawPvcPath,
-						rawAppPath,
-						snapshotPath,
-						pvcBlockRestorePath,
-						appBlockRestorePath)
-					if err != nil {
-						e2elog.Failf("failed to validate restore bigger size clone: %v", err)
+					if encType != util.EncryptionTypeFile {
+						// validate block mode PVC
+						err = validateBiggerPVCFromSnapshot(f,
+							rawPvcPath,
+							rawAppPath,
+							snapshotPath,
+							pvcBlockRestorePath,
+							appBlockRestorePath)
+						if err != nil {
+							e2elog.Failf("failed to validate restore bigger size clone: %v", err)
+						}
 					}
 				})
 
@@ -4050,9 +4115,12 @@ var _ = Describe("RBD", func() {
 			})
 
 			By("clone PVC to a bigger size PVC", func() {
-				By("clone PVC to bigger size encrypted PVC with VaultKMS", func() {
+				ByFileAndBlockEncryption("clone PVC to bigger size encrypted PVC with VaultKMS", func(
+					validator encryptionValidateFunc, _ validateFunc, encType util.EncryptionType,
+				) {
 					scOpts := map[string]string{
 						"encrypted":       "true",
+						"encryptionType":  util.EncryptionTypeString(encType),
 						"encryptionKMSID": "vault-test",
 					}
 					err := createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, scOpts, deletePolicy)
@@ -4075,14 +4143,16 @@ var _ = Describe("RBD", func() {
 					if err != nil {
 						e2elog.Failf("failed to validate bigger size clone: %v", err)
 					}
-					// validate block mode PVC
-					err = validateBiggerCloneFromPVC(f,
-						rawPvcPath,
-						rawAppPath,
-						pvcBlockSmartClonePath,
-						appBlockSmartClonePath)
-					if err != nil {
-						e2elog.Failf("failed to validate bigger size clone: %v", err)
+					if encType != util.EncryptionTypeFile {
+						// validate block mode PVC
+						err = validateBiggerCloneFromPVC(f,
+							rawPvcPath,
+							rawAppPath,
+							pvcBlockSmartClonePath,
+							appBlockSmartClonePath)
+						if err != nil {
+							e2elog.Failf("failed to validate bigger size clone: %v", err)
+						}
 					}
 				})
 
@@ -4268,14 +4338,38 @@ var _ = Describe("RBD", func() {
 				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
 			})
 
-			// Make sure this should be last testcase in this file, because
-			// it deletes pool
-			By("Create a PVC and delete PVC when backend pool deleted", func() {
-				err := pvcDeleteWhenPoolNotFound(pvcPath, false, f)
+			By("create a PVC and bind it to an app with encrypted RBD volume (default type setting)", func() {
+				err := deleteResource(rbdExamplePath + "storageclass.yaml")
 				if err != nil {
-					e2elog.Failf("failed to delete PVC when pool not found: %v", err)
+					e2elog.Failf("failed to delete storageclass: %v", err)
+				}
+				err = createRBDStorageClass(
+					f.ClientSet,
+					f,
+					defaultSCName,
+					nil,
+					map[string]string{"encrypted": "true"},
+					deletePolicy)
+				if err != nil {
+					e2elog.Failf("failed to create storageclass: %v", err)
+				}
+				err = validateEncryptedPVCAndAppBinding(pvcPath, appPath, noKMS, f)
+				if err != nil {
+					e2elog.Failf("failed to validate encrypted pvc: %v", err)
+				}
+				// validate created backend rbd images
+				validateRBDImageCount(f, 0, defaultRBDPool)
+				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
+				err = deleteResource(rbdExamplePath + "storageclass.yaml")
+				if err != nil {
+					e2elog.Failf("failed to delete storageclass: %v", err)
+				}
+				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, nil, deletePolicy)
+				if err != nil {
+					e2elog.Failf("failed to create storageclass: %v", err)
 				}
 			})
+
 			// delete RBD provisioner secret
 			err := deleteCephUser(f, keyringRBDProvisionerUsername)
 			if err != nil {
@@ -4286,6 +4380,15 @@ var _ = Describe("RBD", func() {
 			if err != nil {
 				e2elog.Failf("failed to delete user %s: %v", keyringRBDNodePluginUsername, err)
 			}
+
+			// Make sure this should be last testcase in this file, because
+			// it deletes pool
+			By("Create a PVC and delete PVC when backend pool deleted", func() {
+				err := pvcDeleteWhenPoolNotFound(pvcPath, false, f)
+				if err != nil {
+					e2elog.Failf("failed to delete PVC when pool not found: %v", err)
+				}
+			})
 		})
 	})
 })

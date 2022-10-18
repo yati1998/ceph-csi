@@ -28,14 +28,14 @@ import (
 
 func TestGenerateNewEncryptionPassphrase(t *testing.T) {
 	t.Parallel()
-	b64Passphrase, err := generateNewEncryptionPassphrase()
+	b64Passphrase, err := generateNewEncryptionPassphrase(defaultEncryptionPassphraseSize)
 	require.NoError(t, err)
 
 	// b64Passphrase is URL-encoded, decode to verify the length of the
 	// passphrase
 	passphrase, err := base64.URLEncoding.DecodeString(b64Passphrase)
 	assert.NoError(t, err)
-	assert.Equal(t, encryptionPassphraseSize, len(passphrase))
+	assert.Equal(t, defaultEncryptionPassphraseSize, len(passphrase))
 }
 
 func TestKMSWorkflow(t *testing.T) {
@@ -56,10 +56,41 @@ func TestKMSWorkflow(t *testing.T) {
 
 	volumeID := "volume-id"
 
-	err = ve.StoreNewCryptoPassphrase(volumeID)
+	err = ve.StoreNewCryptoPassphrase(volumeID, defaultEncryptionPassphraseSize)
 	assert.NoError(t, err)
 
 	passphrase, err := ve.GetCryptoPassphrase(volumeID)
 	assert.NoError(t, err)
 	assert.Equal(t, secrets["encryptionPassphrase"], passphrase)
+}
+
+func TestEncryptionType(t *testing.T) {
+	t.Parallel()
+	assert.EqualValues(t, EncryptionTypeInvalid, ParseEncryptionType("wat?"))
+	assert.EqualValues(t, EncryptionTypeInvalid, ParseEncryptionType("both"))
+	assert.EqualValues(t, EncryptionTypeInvalid, ParseEncryptionType("file,block"))
+	assert.EqualValues(t, EncryptionTypeInvalid, ParseEncryptionType("block,file"))
+	assert.EqualValues(t, EncryptionTypeBlock, ParseEncryptionType("block"))
+	assert.EqualValues(t, EncryptionTypeFile, ParseEncryptionType("file"))
+	assert.EqualValues(t, EncryptionTypeNone, ParseEncryptionType(""))
+
+	for _, s := range []string{"file", "block", ""} {
+		assert.EqualValues(t, s, EncryptionTypeString(ParseEncryptionType(s)))
+	}
+}
+
+func TestFetchEncryptionType(t *testing.T) {
+	t.Parallel()
+	volOpts := map[string]string{}
+	assert.EqualValues(t, EncryptionTypeBlock, FetchEncryptionType(volOpts, EncryptionTypeBlock))
+	assert.EqualValues(t, EncryptionTypeFile, FetchEncryptionType(volOpts, EncryptionTypeFile))
+	assert.EqualValues(t, EncryptionTypeNone, FetchEncryptionType(volOpts, EncryptionTypeNone))
+	volOpts["encryptionType"] = ""
+	assert.EqualValues(t, EncryptionTypeInvalid, FetchEncryptionType(volOpts, EncryptionTypeNone))
+	volOpts["encryptionType"] = "block"
+	assert.EqualValues(t, EncryptionTypeBlock, FetchEncryptionType(volOpts, EncryptionTypeNone))
+	volOpts["encryptionType"] = "file"
+	assert.EqualValues(t, EncryptionTypeFile, FetchEncryptionType(volOpts, EncryptionTypeNone))
+	volOpts["encryptionType"] = "INVALID"
+	assert.EqualValues(t, EncryptionTypeInvalid, FetchEncryptionType(volOpts, EncryptionTypeNone))
 }

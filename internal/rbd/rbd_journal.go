@@ -538,7 +538,7 @@ func undoVolReservation(ctx context.Context, rbdVol *rbdVolume, cr *util.Credent
 // Generate new volume Handler
 // The volume handler won't remain same as its contains poolID,clusterID etc
 // which are not same across clusters.
-// nolint:gocyclo,cyclop // TODO: reduce complexity
+// nolint:gocyclo,cyclop,nestif // TODO: reduce complexity
 func RegenerateJournal(
 	volumeAttributes map[string]string,
 	claimName,
@@ -625,8 +625,14 @@ func RegenerateJournal(
 				return "", err
 			}
 		}
+		if rbdVol.Owner != owner {
+			err = j.ResetVolumeOwner(ctx, rbdVol.JournalPool, rbdVol.ReservedID, owner)
+			if err != nil {
+				return "", err
+			}
+		}
 		// Update Metadata on reattach of the same old PV
-		parameters := k8s.PrepareVolumeMetadata(claimName, rbdVol.Owner, "")
+		parameters := k8s.PrepareVolumeMetadata(claimName, owner, "")
 		err = rbdVol.setAllMetadata(parameters)
 		if err != nil {
 			return "", fmt.Errorf("failed to set volume metadata: %w", err)

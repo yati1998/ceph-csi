@@ -43,6 +43,15 @@ queue_rules:
               - "status-success=ci/centos/jjb-validate"
 
 pull_request_rules:
+  - name: start CI jobs for queued PR
+    conditions:
+      - base~=^(devel)|(release-.+)$
+      - "check-pending=Queue: Embarked in merge train"
+    actions:
+      label:
+        add:
+          - ok-to-test
+
   - name: remove outdated approvals
     conditions:
       - base~=^(devel)|(release-.+)$
@@ -50,6 +59,7 @@ pull_request_rules:
       dismiss_reviews:
         approved: true
         changes_requested: false
+
   - name: ask to resolve conflict
     conditions:
       - conflict
@@ -60,6 +70,10 @@ pull_request_rules:
         message: "This pull request now has conflicts with the target branch.
         Could you please resolve conflicts and force push the corrected
         changes? 🙏"
+      label:
+        remove:
+          - ok-to-test
+
   - name: update dependencies by dependabot (skip commitlint)
     conditions:
       - author=dependabot[bot]
@@ -91,6 +105,9 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
+      label:
+        remove:
+          - ok-to-test
 
   - name: dismiss review of merged pull request
     conditions:
@@ -98,6 +115,9 @@ pull_request_rules:
       - merged
     actions:
       dismiss_reviews: {}
+      label:
+        remove:
+          - ok-to-test
 
   - name: automatic merge
     conditions:
@@ -130,6 +150,9 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
+      label:
+        remove:
+          - ok-to-test
 
   - name: automatic merge PR having ready-to-merge label
     conditions:
@@ -161,6 +184,10 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
+      label:
+        remove:
+          - ok-to-test
+
   - name: backport patches to release-v3.6 branch
     conditions:
       - base=devel
@@ -169,6 +196,7 @@ pull_request_rules:
       backport:
         branches:
           - release-v3.6
+
   - name: backport patches to release-v3.7 branch
     conditions:
       - base=devel
@@ -177,6 +205,7 @@ pull_request_rules:
       backport:
         branches:
           - release-v3.7
+
   - name: remove outdated approvals on ci/centos
     conditions:
       - base=ci/centos
@@ -184,6 +213,7 @@ pull_request_rules:
       dismiss_reviews:
         approved: true
         changes_requested: false
+
   - name: automatic merge on ci/centos
     conditions:
       - label!=DNM
@@ -199,6 +229,7 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
+
   - name: automatic merge PR having ready-to-merge label on ci/centos
     conditions:
       - label!=DNM
@@ -213,6 +244,10 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
+      label:
+        remove:
+          - ok-to-test
+
   ##
   ## Automatically set/remove labels
   ##

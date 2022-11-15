@@ -35,8 +35,8 @@ import (
 	librbd "github.com/ceph/go-ceph/rbd"
 	"github.com/ceph/go-ceph/rbd/admin"
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/timestamp"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/cloud-provider/volume/helpers"
 	mount "k8s.io/mount-utils"
@@ -1599,11 +1599,7 @@ func (ri *rbdImage) getImageInfo() error {
 		return err
 	}
 	t := time.Unix(tm.Sec, tm.Nsec)
-	protoTime, err := ptypes.TimestampProto(t)
-	if err != nil {
-		return err
-	}
-	ri.CreatedAt = protoTime
+	ri.CreatedAt = timestamppb.New(t)
 
 	return nil
 }
@@ -2122,10 +2118,6 @@ func (rv *rbdVolume) setAllMetadata(parameters map[string]string) error {
 
 // unsetAllMetadata unset all the metadata from arg keys on RBD image.
 func (rv *rbdVolume) unsetAllMetadata(keys []string) error {
-	if !rv.EnableMetadata {
-		return nil
-	}
-
 	for _, key := range keys {
 		err := rv.RemoveMetadata(key)
 		// TODO: replace string comparison with errno.

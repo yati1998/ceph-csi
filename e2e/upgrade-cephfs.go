@@ -74,6 +74,7 @@ var _ = Describe("CephFS Upgrade Testing", func() {
 		if err != nil {
 			e2elog.Failf("failed to getwd: %v", err)
 		}
+		deployVault(f.ClientSet, deployTimeout)
 		err = upgradeAndDeployCSI(upgradeVersion, "cephfs")
 		if err != nil {
 			e2elog.Failf("failed to upgrade csi: %v", err)
@@ -150,6 +151,7 @@ var _ = Describe("CephFS Upgrade Testing", func() {
 		if err != nil {
 			e2elog.Failf("failed to delete storageclass: %v", err)
 		}
+		deleteVault()
 		if deployCephFS {
 			deleteCephfsPlugin()
 			if cephCSINamespace != defaultNs {
@@ -208,6 +210,12 @@ var _ = Describe("CephFS Upgrade Testing", func() {
 				if err != nil {
 					e2elog.Failf("failed to create pvc and application: %v", err)
 				}
+				var pv *v1.PersistentVolume
+				_, pv, err = getPVCAndPV(f.ClientSet, pvc.Name, pvc.Namespace)
+				if err != nil {
+					e2elog.Failf("failed to get PV object for %s: %v", pvc.Name, err)
+				}
+
 				opt := metav1.ListOptions{
 					LabelSelector: fmt.Sprintf("%s=%s", appKey, label[appKey]),
 				}
@@ -246,6 +254,8 @@ var _ = Describe("CephFS Upgrade Testing", func() {
 				if err != nil {
 					e2elog.Failf("failed to create snapshot %v", err)
 				}
+				validateCephFSSnapshotCount(f, 1, defaultSubvolumegroup, pv)
+
 				err = deletePod(app.Name, app.Namespace, f.ClientSet, deployTimeout)
 				if err != nil {
 					e2elog.Failf("failed to delete application: %v", err)
@@ -300,6 +310,12 @@ var _ = Describe("CephFS Upgrade Testing", func() {
 				if err != nil {
 					e2elog.Failf("failed to create pvc and application: %v", err)
 				}
+				var pv *v1.PersistentVolume
+				_, pv, err = getPVCAndPV(f.ClientSet, pvc.Name, pvc.Namespace)
+				if err != nil {
+					e2elog.Failf("failed to get PV object for %s: %v", pvc.Name, err)
+				}
+
 				opt := metav1.ListOptions{
 					LabelSelector: fmt.Sprintf("%s=%s", appKey, label[appKey]),
 				}
@@ -333,6 +349,7 @@ var _ = Describe("CephFS Upgrade Testing", func() {
 				if err != nil {
 					e2elog.Failf("failed to delete snapshot %v", err)
 				}
+				validateCephFSSnapshotCount(f, 0, defaultSubvolumegroup, pv)
 			})
 
 			By("Create clone from existing PVC", func() {

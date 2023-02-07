@@ -1,9 +1,6 @@
 ---
 defaults:
   actions:
-    # mergify.io has removed bot_account from its free open source plan.
-    # comment:
-    # bot_account: ceph-csi-bot # mergify[bot] will be commenting.
     queue:
       # merge_bot_account: ceph-csi-bot #mergify[bot] will be merging prs.
       # update_bot_account: ceph-csi-bot #mergify will randomly pick and use
@@ -12,6 +9,13 @@ defaults:
       method: rebase
       rebase_fallback: merge
       update_method: rebase
+      # For rebasing Mergify uses the author of the PR. Ideally we use the
+      # ceph-csi-bot for that, but this is a feature that needs a paid
+      # subscription.
+      #
+      # rebase:
+      # Use ceph-csi-bot for rebasing, not the account of the PR owner.
+      # bot_account: ceph-csi-bot
 
 queue_rules:
   - name: default
@@ -59,6 +63,9 @@ pull_request_rules:
       dismiss_reviews:
         approved: true
         changes_requested: false
+      label:
+        remove:
+          - ok-to-test
 
   - name: ask to resolve conflict
     conditions:

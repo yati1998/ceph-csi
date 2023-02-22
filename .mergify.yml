@@ -50,6 +50,8 @@ pull_request_rules:
     conditions:
       - base~=^(devel)|(release-.+)$
       - "check-pending=Queue: Embarked in merge train"
+      - not:
+          check-pending~=^ci/centos
     actions:
       label:
         add:
@@ -73,9 +75,6 @@ pull_request_rules:
         message: "This pull request now has conflicts with the target branch.
         Could you please resolve conflicts and force push the corrected
         changes? 🙏"
-      label:
-        remove:
-          - ok-to-test
 
   - name: update dependencies by dependabot (skip commitlint)
     conditions:
@@ -108,9 +107,6 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
-      label:
-        remove:
-          - ok-to-test
 
   - name: dismiss review of merged pull request
     conditions:
@@ -118,9 +114,6 @@ pull_request_rules:
       - merged
     actions:
       dismiss_reviews: {}
-      label:
-        remove:
-          - ok-to-test
 
   - name: automatic merge
     conditions:
@@ -153,9 +146,6 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
-      label:
-        remove:
-          - ok-to-test
 
   - name: automatic merge PR having ready-to-merge label
     conditions:
@@ -187,9 +177,6 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
-      label:
-        remove:
-          - ok-to-test
 
   - name: backport patches to release-v3.6 branch
     conditions:
@@ -247,9 +234,6 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
-      label:
-        remove:
-          - ok-to-test
 
   ##
   ## Automatically set/remove labels

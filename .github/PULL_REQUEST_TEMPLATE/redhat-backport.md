@@ -11,4 +11,3 @@ I hereby confirm that:
 - [ ] branches for higher versions of the project have this change merged
 - [ ] this PR is not *downstream-only*, if that was the case, I would have
   explained its need very clearly
-

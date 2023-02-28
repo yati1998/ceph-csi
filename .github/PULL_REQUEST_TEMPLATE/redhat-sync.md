@@ -6,4 +6,3 @@ The most important recent changes that we want included are:
 - the new foz bar baz works flawlessly
 - this addresses a bug where users are facing issues with XYZ
 - ...
-

@@ -66,6 +66,12 @@ func createCephfsStorageClass(
 	if err != nil {
 		return err
 	}
+	// TODO: remove this once the ceph-csi driver release-v3.9 is completed
+	// and upgrade tests are done from v3.9 to devel.
+	// The mountOptions from previous are not compatible with NodeStageVolume
+	// request.
+	sc.MountOptions = []string{}
+
 	sc.Parameters["fsName"] = fileSystemName
 	sc.Parameters["csi.storage.k8s.io/provisioner-secret-namespace"] = cephCSINamespace
 	sc.Parameters["csi.storage.k8s.io/provisioner-secret-name"] = cephFSProvisionerSecretName
@@ -102,8 +108,8 @@ func createCephfsStorageClass(
 
 	timeout := time.Duration(deployTimeout) * time.Minute
 
-	return wait.PollImmediate(poll, timeout, func() (bool, error) {
-		_, err = c.StorageV1().StorageClasses().Create(context.TODO(), &sc, metav1.CreateOptions{})
+	return wait.PollUntilContextTimeout(context.TODO(), poll, timeout, true, func(ctx context.Context) (bool, error) {
+		_, err = c.StorageV1().StorageClasses().Create(ctx, &sc, metav1.CreateOptions{})
 		if err != nil {
 			framework.Logf("error creating StorageClass %q: %v", sc.Name, err)
 			if isRetryableAPIError(err) {

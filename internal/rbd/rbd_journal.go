@@ -538,7 +538,8 @@ func undoVolReservation(ctx context.Context, rbdVol *rbdVolume, cr *util.Credent
 // Generate new volume Handler
 // The volume handler won't remain same as its contains poolID,clusterID etc
 // which are not same across clusters.
-// nolint:gocyclo,cyclop,nestif // TODO: reduce complexity
+//
+//nolint:gocyclo,cyclop,nestif // TODO: reduce complexity
 func RegenerateJournal(
 	volumeAttributes map[string]string,
 	claimName,
@@ -566,13 +567,13 @@ func RegenerateJournal(
 
 	err = vi.DecomposeCSIID(rbdVol.VolID)
 	if err != nil {
-		return "", fmt.Errorf("%w: error decoding volume ID (%s) (%s)",
+		return "", fmt.Errorf("%w: error decoding volume ID (%w) (%s)",
 			ErrInvalidVolID, err, rbdVol.VolID)
 	}
 
 	rbdVol.Owner = owner
 
-	kmsID, encryptionType, err = ParseEncryptionOpts(ctx, volumeAttributes, util.EncryptionTypeNone)
+	kmsID, encryptionType, err = ParseEncryptionOpts(volumeAttributes, util.EncryptionTypeNone)
 	if err != nil {
 		return "", err
 	}

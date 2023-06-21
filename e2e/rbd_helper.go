@@ -19,7 +19,6 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -37,7 +36,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
-// nolint:gomnd // numbers specify Kernel versions.
+//nolint:gomnd // numbers specify Kernel versions.
 var nbdResizeSupport = []util.KernelVersion{
 	{
 		Version:      5,
@@ -49,7 +48,7 @@ var nbdResizeSupport = []util.KernelVersion{
 	}, // standard 5.3+ versions
 }
 
-// nolint:gomnd // numbers specify Kernel versions.
+//nolint:gomnd // numbers specify Kernel versions.
 var fastDiffSupport = []util.KernelVersion{
 	{
 		Version:      5,
@@ -61,7 +60,7 @@ var fastDiffSupport = []util.KernelVersion{
 	}, // standard 5.3+ versions
 }
 
-// nolint:gomnd // numbers specify Kernel versions.
+//nolint:gomnd // numbers specify Kernel versions.
 var deepFlattenSupport = []util.KernelVersion{
 	{
 		Version:      5,
@@ -75,7 +74,8 @@ var deepFlattenSupport = []util.KernelVersion{
 
 // To use `io-timeout=0` we need
 // www.mail-archive.com/linux-block@vger.kernel.org/msg38060.html
-// nolint:gomnd // numbers specify Kernel versions.
+//
+//nolint:gomnd // numbers specify Kernel versions.
 var nbdZeroIOtimeoutSupport = []util.KernelVersion{
 	{
 		Version:      5,
@@ -164,8 +164,8 @@ func createRBDStorageClass(
 
 	timeout := time.Duration(deployTimeout) * time.Minute
 
-	return wait.PollImmediate(poll, timeout, func() (bool, error) {
-		_, err = c.StorageV1().StorageClasses().Create(context.TODO(), &sc, metav1.CreateOptions{})
+	return wait.PollUntilContextTimeout(context.TODO(), poll, timeout, true, func(ctx context.Context) (bool, error) {
+		_, err = c.StorageV1().StorageClasses().Create(ctx, &sc, metav1.CreateOptions{})
 		if err != nil {
 			framework.Logf("error creating StorageClass %q: %v", sc.Name, err)
 			if isRetryableAPIError(err) {
@@ -791,6 +791,8 @@ func sparsifyBackingRBDImage(f *framework.Framework, pvc *v1.PersistentVolumeCla
 func deletePool(name string, cephFS bool, f *framework.Framework) error {
 	cmds := []string{}
 	if cephFS {
+		//nolint:dupword // "ceph osd pool delete" requires the pool 2x
+		//
 		// ceph fs fail
 		// ceph fs rm myfs --yes-i-really-mean-it
 		// ceph osd pool delete myfs-metadata myfs-metadata
@@ -802,6 +804,8 @@ func deletePool(name string, cephFS bool, f *framework.Framework) error {
 			fmt.Sprintf("ceph osd pool delete %s-metadata %s-metadata --yes-i-really-really-mean-it", name, name),
 			fmt.Sprintf("ceph osd pool delete %s-replicated %s-replicated --yes-i-really-really-mean-it", name, name))
 	} else {
+		//nolint:dupword // "ceph osd pool delete" requires the pool 2x
+		//
 		// ceph osd pool delete replicapool replicapool
 		// --yes-i-really-mean-it
 		cmds = append(cmds, fmt.Sprintf("ceph osd pool delete %s %s --yes-i-really-really-mean-it", name, name))
@@ -1033,7 +1037,7 @@ func listRBDImagesInTrash(f *framework.Framework, poolName string) ([]trashInfo,
 func waitToRemoveImagesFromTrash(f *framework.Framework, poolName string, t int) error {
 	var errReason error
 	timeout := time.Duration(t) * time.Minute
-	err := wait.PollImmediate(poll, timeout, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(context.TODO(), poll, timeout, true, func(_ context.Context) (bool, error) {
 		imagesInTrash, err := listRBDImagesInTrash(f, poolName)
 		if err != nil {
 			return false, err
@@ -1047,7 +1051,7 @@ func waitToRemoveImagesFromTrash(f *framework.Framework, poolName string, t int)
 		return false, nil
 	})
 
-	if errors.Is(err, wait.ErrWaitTimeout) {
+	if wait.Interrupted(err) {
 		err = errReason
 	}
 

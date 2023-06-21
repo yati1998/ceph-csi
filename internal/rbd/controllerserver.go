@@ -191,7 +191,7 @@ func (cs *ControllerServer) parseVolCreateRequest(
 	// get the owner of the PVC which is required for few encryption related operations
 	rbdVol.Owner = k8s.GetOwner(req.GetParameters())
 
-	err = rbdVol.initKMS(ctx, req.GetParameters(), req.GetSecrets())
+	err = rbdVol.initKMS(req.GetParameters(), req.GetSecrets())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -308,8 +308,8 @@ func (cs *ControllerServer) CreateVolume(
 		return nil, err
 	}
 
-	// TODO: create/get a connection from the the ConnPool, and do not pass
-	// the credentials to any of the utility functions.
+	// TODO: create/get a connection from the ConnPool, and do not pass the
+	// credentials to any of the utility functions.
 
 	cr, err := util.NewUserCredentialsWithMigration(req.GetSecrets())
 	if err != nil {
@@ -943,7 +943,7 @@ func (cs *ControllerServer) DeleteVolume(
 func cleanupRBDImage(ctx context.Context,
 	rbdVol *rbdVolume, cr *util.Credentials,
 ) (*csi.DeleteVolumeResponse, error) {
-	mirroringInfo, err := rbdVol.getImageMirroringInfo()
+	mirroringInfo, err := rbdVol.GetImageMirroringInfo()
 	if err != nil {
 		log.ErrorLog(ctx, err.Error())
 
@@ -962,7 +962,7 @@ func cleanupRBDImage(ctx context.Context,
 		// the image on all the remote (secondary) clusters will get
 		// auto-deleted. This helps in garbage collecting the OMAP, PVC and PV
 		// objects after failback operation.
-		localStatus, rErr := rbdVol.getLocalState()
+		localStatus, rErr := rbdVol.GetLocalState()
 		if rErr != nil {
 			return nil, status.Error(codes.Internal, rErr.Error())
 		}
@@ -1060,7 +1060,8 @@ func (cs *ControllerServer) ValidateVolumeCapabilities(
 }
 
 // CreateSnapshot creates the snapshot in backend and stores metadata in store.
-// nolint:gocyclo,cyclop // TODO: reduce complexity.
+//
+//nolint:gocyclo,cyclop // TODO: reduce complexity.
 func (cs *ControllerServer) CreateSnapshot(
 	ctx context.Context,
 	req *csi.CreateSnapshotRequest,

@@ -15,12 +15,20 @@
 .PHONY: all
 all: \
 	scc.yaml \
+	cephfs/kubernetes/csidriver.yaml \
+	cephfs/kubernetes/csi-config-map.yaml \
 	nfs/kubernetes/csidriver.yaml \
 	nfs/kubernetes/csi-config-map.yaml \
 	rbd/kubernetes/csidriver.yaml \
 	rbd/kubernetes/csi-config-map.yaml
 
 scc.yaml: ../api/deploy/ocp/scc.yaml ../api/deploy/ocp/scc.go
+	$(MAKE) -C ../tools generate-deploy
+
+cephfs/kubernetes/csidriver.yaml: ../api/deploy/kubernetes/cephfs/csidriver.yaml ../api/deploy/kubernetes/cephfs/csidriver.go
+	$(MAKE) -C ../tools generate-deploy
+
+cephfs/kubernetes/csi-config-map.yaml: ../api/deploy/kubernetes/cephfs/csi-config-map.*
 	$(MAKE) -C ../tools generate-deploy
 
 nfs/kubernetes/csidriver.yaml: ../api/deploy/kubernetes/nfs/csidriver.yaml ../api/deploy/kubernetes/nfs/csidriver.go

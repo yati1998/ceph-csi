@@ -126,6 +126,8 @@ linters-settings:
       - wrapperFunc
       - unnamedResult
       - dupImport  # https://github.com/go-critic/go-critic/issues/845
+      # TODO: uncheckedInlineErr gives many false-positives
+      - uncheckedInlineErr
   unused:
     # treat code as a program (not a library) and report unused exported
     # identifiers; default is false.
@@ -156,6 +158,15 @@ linters-settings:
     max-blank-identifiers: 3
   nestif:
     min-complexity: 7
+  revive:
+    rules:
+      # dot-imports is already checked by golint
+      - name: dot-imports
+        disabled: true
+  stylecheck:
+    checks:
+      # "should not use dot imports" is handled by golint
+      - "-ST1001"
 
 linters:
   enable-all: true
@@ -195,3 +206,5 @@ linters:
     - maintidx
     - exhaustruct
     - containedctx
+    # TODO: depguard requires a list of (un)acceptable imports
+    - depguard

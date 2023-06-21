@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/onsi/ginkgo/v2" // nolint
+	. "github.com/onsi/ginkgo/v2" //nolint:golint // e2e uses By() and other Ginkgo functions
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -130,7 +130,7 @@ var _ = Describe("RBD Upgrade Testing", func() {
 			logsCSIPods("app=csi-rbdplugin", c)
 
 			// log all details from the namespace where Ceph-CSI is deployed
-			e2edebug.DumpAllNamespaceInfo(c, cephCSINamespace)
+			e2edebug.DumpAllNamespaceInfo(context.TODO(), c, cephCSINamespace)
 		}
 
 		err := deleteConfigMap(rbdDirPath)

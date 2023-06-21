@@ -1161,7 +1161,7 @@ func generateVolumeFromVolumeID(
 // GenVolFromVolID generates a rbdVolume structure from the provided identifier, updating
 // the structure with elements from on-disk image metadata as well.
 //
-// nolint // returns non-exported *rbdVolume, which is fine
+//nolint:golint // TODO: returning unexported rbdVolume type, use an interface instead.
 func GenVolFromVolID(
 	ctx context.Context,
 	volumeID string,
@@ -1175,7 +1175,7 @@ func GenVolFromVolID(
 
 	err := vi.DecomposeCSIID(volumeID)
 	if err != nil {
-		return vol, fmt.Errorf("%w: error decoding volume ID (%s) (%s)",
+		return vol, fmt.Errorf("%w: error decoding volume ID (%w) (%s)",
 			ErrInvalidVolID, err, volumeID)
 	}
 
@@ -1197,6 +1197,7 @@ func GenVolFromVolID(
 			return rbdVol, vErr
 		}
 	}
+
 	return vol, err
 }
 
@@ -1702,7 +1703,7 @@ func (ri *rbdImageMetadataStash) String() string {
 func stashRBDImageMetadata(volOptions *rbdVolume, metaDataPath string) error {
 	imgMeta := rbdImageMetadataStash{
 		// there are no checks for this at present
-		Version:        3, // nolint:gomnd // number specifies version.
+		Version:        3, //nolint:gomnd // number specifies version.
 		Pool:           volOptions.Pool,
 		RadosNamespace: volOptions.RadosNamespace,
 		ImageName:      volOptions.RbdImageName,
@@ -2018,7 +2019,7 @@ func (ri *rbdImage) isCompabitableClone(dst *rbdImage) error {
 	return nil
 }
 
-func (ri *rbdImage) addSnapshotScheduling(
+func (ri *rbdImage) AddSnapshotScheduling(
 	interval admin.Interval,
 	startTime admin.StartTime,
 ) error {

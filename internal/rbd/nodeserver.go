@@ -78,7 +78,7 @@ var (
 	kernelRelease = ""
 	// deepFlattenSupport holds the list of kernel which support mapping rbd
 	// image with deep-flatten image feature
-	// nolint:gomnd // numbers specify Kernel versions.
+	//nolint:gomnd // numbers specify Kernel versions.
 	deepFlattenSupport = []util.KernelVersion{
 		{
 			Version:      5,
@@ -101,11 +101,21 @@ var (
 	// xfsHasReflink is set by xfsSupportsReflink(), use the function when
 	// checking the support for reflink.
 	xfsHasReflink = xfsReflinkUnset
+
+	mkfsDefaultArgs = map[string][]string{
+		"ext4": {"-m0", "-Enodiscard,lazy_itable_init=1,lazy_journal_init=1"},
+		"xfs":  {"-K"},
+	}
+
+	mountDefaultOpts = map[string][]string{
+		"xfs": {"nouuid"},
+	}
 )
 
 // parseBoolOption checks if parameters contain option and parse it. If it is
 // empty or not set return default.
-// nolint:unparam // currently defValue is always false, this can change in the future
+//
+//nolint:unparam // currently defValue is always false, this can change in the future
 func parseBoolOption(ctx context.Context, parameters map[string]string, optionName string, defValue bool) bool {
 	boolVal := defValue
 
@@ -224,7 +234,7 @@ func (ns *NodeServer) populateRbdVol(
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	err = rv.initKMS(ctx, req.GetVolumeContext(), req.GetSecrets())
+	err = rv.initKMS(req.GetVolumeContext(), req.GetSecrets())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -756,7 +766,8 @@ func (ns *NodeServer) mountVolumeToStagePath(
 		return err
 	}
 
-	opt := []string{"_netdev"}
+	opt := mountDefaultOpts[fsType]
+	opt = append(opt, "_netdev")
 	opt = csicommon.ConstructMountOptions(opt, req.GetVolumeCapability())
 	isBlock := req.GetVolumeCapability().GetBlock() != nil
 	rOnly := "ro"
@@ -771,34 +782,43 @@ func (ns *NodeServer) mountVolumeToStagePath(
 		readOnly = true
 	}
 
-	if fsType == "xfs" {
-		opt = append(opt, "nouuid")
-	}
+	if existingFormat == "" && !staticVol && !readOnly && !isBlock {
+		args := mkfsDefaultArgs[fsType]
 
-	if existingFormat == "" && !staticVol && !readOnly {
-		args := []string{}
+		// if the VolumeContext contains "mkfsOptions", use those as args instead
+		volumeCtx := req.GetVolumeContext()
+		if volumeCtx != nil {
+			mkfsOptions := volumeCtx["mkfsOptions"]
+			if mkfsOptions != "" {
+				args = strings.Split(mkfsOptions, " ")
+			}
+		}
+
+		// add extra arguments depending on the filesystem
+		mkfs := "mkfs." + fsType
 		switch fsType {
 		case "ext4":
-			args = []string{"-m0", "-Enodiscard,lazy_itable_init=1,lazy_journal_init=1"}
 			if fileEncryption {
 				args = append(args, "-Oencrypt")
 			}
-			args = append(args, devicePath)
 		case "xfs":
-			args = []string{"-K", devicePath}
 			// always disable reflink
 			// TODO: make enabling an option, see ceph/ceph-csi#1256
 			if ns.xfsSupportsReflink() {
 				args = append(args, "-m", "reflink=0")
 			}
+		case "":
+			// no filesystem type specified, just use "mkfs"
+			mkfs = "mkfs"
 		}
-		if len(args) > 0 {
-			cmdOut, cmdErr := diskMounter.Exec.Command("mkfs."+fsType, args...).CombinedOutput()
-			if cmdErr != nil {
-				log.ErrorLog(ctx, "failed to run mkfs error: %v, output: %v", cmdErr, string(cmdOut))
 
-				return cmdErr
-			}
+		// add device as last argument
+		args = append(args, devicePath)
+		cmdOut, cmdErr := diskMounter.Exec.Command(mkfs, args...).CombinedOutput()
+		if cmdErr != nil {
+			log.ErrorLog(ctx, "failed to run mkfs.%s (%v) error: %v, output: %v", fsType, args, cmdErr, string(cmdOut))
+
+			return cmdErr
 		}
 	}
 
@@ -1003,7 +1023,7 @@ func (ns *NodeServer) NodeUnstageVolume(
 		}
 
 		// It was not mounted and image metadata is also missing, we are done as the last step in
-		// in the staging transaction is complete
+		// the staging transaction is complete
 		return &csi.NodeUnstageVolumeResponse{}, nil
 	}
 
@@ -1108,6 +1128,8 @@ func (ns *NodeServer) NodeExpandVolume(
 	imgInfo, err := lookupRBDImageMetadataStash(volumePath)
 	if err != nil {
 		log.ErrorLog(ctx, "failed to find image metadata: %v", err)
+
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 	devicePath, found := findDeviceMappingImage(
 		ctx,

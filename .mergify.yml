@@ -29,15 +29,15 @@ queue_rules:
               - "status-success=golangci-lint"
               - "status-success=mod-check"
               - "status-success=lint-extras"
-              - "status-success=ci/centos/k8s-e2e-external-storage/1.23"
-              - "status-success=ci/centos/k8s-e2e-external-storage/1.24"
               - "status-success=ci/centos/k8s-e2e-external-storage/1.25"
-              - "status-success=ci/centos/mini-e2e-helm/k8s-1.23"
-              - "status-success=ci/centos/mini-e2e-helm/k8s-1.24"
+              - "status-success=ci/centos/k8s-e2e-external-storage/1.26"
+              - "status-success=ci/centos/k8s-e2e-external-storage/1.27"
               - "status-success=ci/centos/mini-e2e-helm/k8s-1.25"
-              - "status-success=ci/centos/mini-e2e/k8s-1.23"
-              - "status-success=ci/centos/mini-e2e/k8s-1.24"
+              - "status-success=ci/centos/mini-e2e-helm/k8s-1.26"
+              - "status-success=ci/centos/mini-e2e-helm/k8s-1.27"
               - "status-success=ci/centos/mini-e2e/k8s-1.25"
+              - "status-success=ci/centos/mini-e2e/k8s-1.26"
+              - "status-success=ci/centos/mini-e2e/k8s-1.27"
               - "status-success=ci/centos/upgrade-tests-cephfs"
               - "status-success=ci/centos/upgrade-tests-rbd"
           - and:
@@ -46,12 +46,16 @@ queue_rules:
               - "status-success=ci/centos/jjb-validate"
 
 pull_request_rules:
-  - name: start CI jobs for queued PR
+  - name: start CI jobs for PRs in the merge queue
     conditions:
       - base~=^(devel)|(release-.+)$
-      - "check-pending=Queue: Embarked in merge train"
       - not:
           check-pending~=^ci/centos
+      - not:
+          status-success~=^ci/centos
+      - or:
+          - "check-pending=Queue: Embarked in merge train"
+          - author=mergify[bot]
     actions:
       label:
         add:
@@ -91,15 +95,15 @@ pull_request_rules:
       - "status-success=golangci-lint"
       - "status-success=mod-check"
       - "status-success=lint-extras"
-      - "status-success=ci/centos/k8s-e2e-external-storage/1.23"
-      - "status-success=ci/centos/k8s-e2e-external-storage/1.24"
       - "status-success=ci/centos/k8s-e2e-external-storage/1.25"
-      - "status-success=ci/centos/mini-e2e-helm/k8s-1.23"
-      - "status-success=ci/centos/mini-e2e-helm/k8s-1.24"
+      - "status-success=ci/centos/k8s-e2e-external-storage/1.26"
+      - "status-success=ci/centos/k8s-e2e-external-storage/1.27"
       - "status-success=ci/centos/mini-e2e-helm/k8s-1.25"
-      - "status-success=ci/centos/mini-e2e/k8s-1.23"
-      - "status-success=ci/centos/mini-e2e/k8s-1.24"
+      - "status-success=ci/centos/mini-e2e-helm/k8s-1.26"
+      - "status-success=ci/centos/mini-e2e-helm/k8s-1.27"
       - "status-success=ci/centos/mini-e2e/k8s-1.25"
+      - "status-success=ci/centos/mini-e2e/k8s-1.26"
+      - "status-success=ci/centos/mini-e2e/k8s-1.27"
       - "status-success=ci/centos/upgrade-tests-cephfs"
       - "status-success=ci/centos/upgrade-tests-rbd"
       - "status-success=DCO"
@@ -130,15 +134,15 @@ pull_request_rules:
       - "status-success=commitlint"
       - "status-success=mod-check"
       - "status-success=lint-extras"
-      - "status-success=ci/centos/k8s-e2e-external-storage/1.23"
-      - "status-success=ci/centos/k8s-e2e-external-storage/1.24"
       - "status-success=ci/centos/k8s-e2e-external-storage/1.25"
-      - "status-success=ci/centos/mini-e2e-helm/k8s-1.23"
-      - "status-success=ci/centos/mini-e2e-helm/k8s-1.24"
+      - "status-success=ci/centos/k8s-e2e-external-storage/1.26"
+      - "status-success=ci/centos/k8s-e2e-external-storage/1.27"
       - "status-success=ci/centos/mini-e2e-helm/k8s-1.25"
-      - "status-success=ci/centos/mini-e2e/k8s-1.23"
-      - "status-success=ci/centos/mini-e2e/k8s-1.24"
+      - "status-success=ci/centos/mini-e2e-helm/k8s-1.26"
+      - "status-success=ci/centos/mini-e2e-helm/k8s-1.27"
       - "status-success=ci/centos/mini-e2e/k8s-1.25"
+      - "status-success=ci/centos/mini-e2e/k8s-1.26"
+      - "status-success=ci/centos/mini-e2e/k8s-1.27"
       - "status-success=ci/centos/upgrade-tests-cephfs"
       - "status-success=ci/centos/upgrade-tests-rbd"
       - "status-success=DCO"
@@ -161,15 +165,15 @@ pull_request_rules:
       - "status-success=mod-check"
       - "status-success=lint-extras"
       - "#changes-requested-reviews-by=0"
-      - "status-success=ci/centos/k8s-e2e-external-storage/1.23"
-      - "status-success=ci/centos/k8s-e2e-external-storage/1.24"
       - "status-success=ci/centos/k8s-e2e-external-storage/1.25"
-      - "status-success=ci/centos/mini-e2e-helm/k8s-1.23"
-      - "status-success=ci/centos/mini-e2e-helm/k8s-1.24"
+      - "status-success=ci/centos/k8s-e2e-external-storage/1.26"
+      - "status-success=ci/centos/k8s-e2e-external-storage/1.27"
       - "status-success=ci/centos/mini-e2e-helm/k8s-1.25"
-      - "status-success=ci/centos/mini-e2e/k8s-1.23"
-      - "status-success=ci/centos/mini-e2e/k8s-1.24"
+      - "status-success=ci/centos/mini-e2e-helm/k8s-1.26"
+      - "status-success=ci/centos/mini-e2e-helm/k8s-1.27"
       - "status-success=ci/centos/mini-e2e/k8s-1.25"
+      - "status-success=ci/centos/mini-e2e/k8s-1.26"
+      - "status-success=ci/centos/mini-e2e/k8s-1.27"
       - "status-success=ci/centos/upgrade-tests-cephfs"
       - "status-success=ci/centos/upgrade-tests-rbd"
       - "status-success=DCO"
@@ -177,15 +181,6 @@ pull_request_rules:
       queue:
         name: default
       delete_head_branch: {}
-
-  - name: backport patches to release-v3.6 branch
-    conditions:
-      - base=devel
-      - label=backport-to-release-v3.6
-    actions:
-      backport:
-        branches:
-          - release-v3.6
 
   - name: backport patches to release-v3.7 branch
     conditions:
@@ -195,6 +190,15 @@ pull_request_rules:
       backport:
         branches:
           - release-v3.7
+
+  - name: backport patches to release-v3.8 branch
+    conditions:
+      - base=devel
+      - label=backport-to-release-v3.8
+    actions:
+      backport:
+        branches:
+          - release-v3.8
 
   - name: remove outdated approvals on ci/centos
     conditions:

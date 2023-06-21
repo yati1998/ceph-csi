@@ -18,14 +18,13 @@ package e2e
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/ceph/ceph-csi/internal/util"
 
-	. "github.com/onsi/ginkgo/v2" // nolint
+	. "github.com/onsi/ginkgo/v2" //nolint:golint // e2e uses By() and other Ginkgo functions
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -45,12 +44,14 @@ var (
 	configMap          = "csi-config-map.yaml"
 	cephConfconfigMap  = "ceph-conf.yaml"
 	csiDriverObject    = "csidriver.yaml"
-	rbdDirPath         = "../deploy/rbd/kubernetes/"
+	deployPath         = "../deploy/"
+	rbdDirPath         = deployPath + "/rbd/kubernetes/"
 	examplePath        = "../examples/"
 	rbdExamplePath     = examplePath + "/rbd/"
 	e2eTemplatesPath   = "../e2e/templates/"
 	rbdDeploymentName  = "csi-rbdplugin-provisioner"
 	rbdDaemonsetName   = "csi-rbdplugin"
+	rbdContainerName   = "csi-rbdplugin"
 	defaultRBDPool     = "replicapool"
 	erasureCodedPool   = "ec-pool"
 	noDataPool         = ""
@@ -130,6 +131,7 @@ func deleteRBDPlugin() {
 }
 
 func createORDeleteRbdResources(action kubectlAction) {
+	cephConfigFile := getConfigFile(cephConfconfigMap, deployPath, examplePath)
 	resources := []ResourceDeployer{
 		// shared resources
 		&yamlResource{
@@ -137,7 +139,7 @@ func createORDeleteRbdResources(action kubectlAction) {
 			allowMissing: true,
 		},
 		&yamlResource{
-			filename:     examplePath + cephConfconfigMap,
+			filename:     cephConfigFile,
 			allowMissing: true,
 		},
 		// dependencies for provisioner
@@ -204,7 +206,8 @@ func checkGetKeyError(err error, stdErr string) bool {
 }
 
 // checkClusternameInMetadata check for cluster name metadata on RBD image.
-// nolint:nilerr // intentionally returning nil on error in the retry loop.
+//
+//nolint:nilerr // intentionally returning nil on error in the retry loop.
 func checkClusternameInMetadata(f *framework.Framework, ns, pool, image string) {
 	t := time.Duration(deployTimeout) * time.Minute
 	var (
@@ -212,7 +215,7 @@ func checkClusternameInMetadata(f *framework.Framework, ns, pool, image string) 
 		stdErr  string
 		execErr error
 	)
-	err := wait.PollImmediate(poll, t, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(context.TODO(), poll, t, true, func(_ context.Context) (bool, error) {
 		coName, stdErr, execErr = execCommandInToolBoxPod(f,
 			fmt.Sprintf("rbd image-meta get %s --image=%s %s", rbdOptions(pool), image, clusterNameKey),
 			ns)
@@ -355,7 +358,7 @@ var _ = Describe("RBD", func() {
 			logsCSIPods("app=csi-rbdplugin", c)
 
 			// log all details from the namespace where Ceph-CSI is deployed
-			e2edebug.DumpAllNamespaceInfo(c, cephCSINamespace)
+			e2edebug.DumpAllNamespaceInfo(context.TODO(), c, cephCSINamespace)
 		}
 
 		err := deleteConfigMap(rbdDirPath)
@@ -419,7 +422,7 @@ var _ = Describe("RBD", func() {
 				By("verify PVC and app binding on helm installation", func() {
 					err := validatePVCAndAppBinding(pvcPath, appPath, f)
 					if err != nil {
-						framework.Failf("failed to validate CephFS pvc and application binding: %v", err)
+						framework.Failf("failed to validate RBD pvc and application binding: %v", err)
 					}
 					// validate created backend rbd images
 					validateRBDImageCount(f, 0, defaultRBDPool)
@@ -440,6 +443,14 @@ var _ = Describe("RBD", func() {
 					}
 				})
 			}
+
+			By("verify mountOptions support", func() {
+				err := verifySeLinuxMountOption(f, pvcPath, appPath,
+					rbdDaemonsetName, rbdContainerName, cephCSINamespace)
+				if err != nil {
+					framework.Failf("failed to verify mount options: %v", err)
+				}
+			})
 
 			By("create a PVC and check PVC/PV metadata on RBD image", func() {
 				pvc, err := loadPVC(pvcPath)
@@ -596,7 +607,7 @@ var _ = Describe("RBD", func() {
 				validateRBDImageCount(f, 1, defaultRBDPool)
 				validateOmapCount(f, 1, rbdType, defaultRBDPool, volumesType)
 				// create namespace for reattach PVC, deletion will be taken care by framework
-				ns, err := f.CreateNamespace(reattachPVCNamespace, nil)
+				ns, err := f.CreateNamespace(context.TODO(), reattachPVCNamespace, nil)
 				if err != nil {
 					framework.Failf("failed to create namespace: %v", err)
 				}
@@ -1089,6 +1100,45 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
+			By("create a PVC and bind it to an app with ext4 as the FS and 1024 inodes ", func() {
+				err := deleteResource(rbdExamplePath + "storageclass.yaml")
+				if err != nil {
+					framework.Failf("failed to delete storageclass: %v", err)
+				}
+				err = createRBDStorageClass(
+					f.ClientSet,
+					f,
+					defaultSCName,
+					nil,
+					map[string]string{
+						"csi.storage.k8s.io/fstype": "ext4",
+						"mkfsOptions":               "-N1024", // 1024 inodes
+					},
+					deletePolicy)
+				if err != nil {
+					framework.Failf("failed to create storageclass: %v", err)
+				}
+				err = validatePVCAndAppBinding(pvcPath, appPath, f)
+				if err != nil {
+					framework.Failf("failed to validate pvc and application binding: %v", err)
+				}
+				err = validateInodeCount(pvcPath, f, 1024)
+				if err != nil {
+					framework.Failf("failed to validate pvc and application binding: %v", err)
+				}
+				// validate created backend rbd images
+				validateRBDImageCount(f, 0, defaultRBDPool)
+				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
+				err = deleteResource(rbdExamplePath + "storageclass.yaml")
+				if err != nil {
+					framework.Failf("failed to delete storageclass: %v", err)
+				}
+				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, nil, deletePolicy)
+				if err != nil {
+					framework.Failf("failed to create storageclass: %v", err)
+				}
+			})
+
 			By("create a PVC and bind it to an app using rbd-nbd mounter", func() {
 				if !testNBD {
 					framework.Logf("skipping NBD test")
@@ -1207,7 +1257,7 @@ var _ = Describe("RBD", func() {
 						}
 						err = validatePVCAndAppBinding(pvcPath, appPath, f)
 						if err != nil {
-							framework.Failf("failed to validate CephFS pvc and application binding: %v", err)
+							framework.Failf("failed to validate RBD pvc and application binding: %v", err)
 						}
 						// validate created backend rbd images
 						validateRBDImageCount(f, 0, defaultRBDPool)
@@ -1372,7 +1422,7 @@ var _ = Describe("RBD", func() {
 						}
 						err = validatePVCAndAppBinding(pvcPath, appPath, f)
 						if err != nil {
-							framework.Failf("failed to validate CephFS pvc and application binding: %v", err)
+							framework.Failf("failed to validate RBD pvc and application binding: %v", err)
 						}
 						// validate created backend rbd images
 						validateRBDImageCount(f, 0, defaultRBDPool)
@@ -1848,7 +1898,7 @@ var _ = Describe("RBD", func() {
 
 				timeout := time.Duration(deployTimeout) * time.Minute
 				var reason string
-				err = wait.PollImmediate(poll, timeout, func() (bool, error) {
+				err = wait.PollUntilContextTimeout(context.TODO(), poll, timeout, true, func(_ context.Context) (bool, error) {
 					var runningAttachCmd string
 					runningAttachCmd, stdErr, err = execCommandInContainer(
 						f,
@@ -1873,7 +1923,7 @@ var _ = Describe("RBD", func() {
 					return true, nil
 				})
 
-				if errors.Is(err, wait.ErrWaitTimeout) {
+				if wait.Interrupted(err) {
 					framework.Failf("timed out waiting for the rbd-nbd process: %s", reason)
 				}
 				if err != nil {
@@ -2833,6 +2883,55 @@ var _ = Describe("RBD", func() {
 				}
 			})
 
+			By("create storageClass with encrypted as false", func() {
+				err := deleteResource(rbdExamplePath + "storageclass.yaml")
+				if err != nil {
+					framework.Failf("failed to delete storageclass: %v", err)
+				}
+				err = createRBDStorageClass(
+					f.ClientSet,
+					f,
+					defaultSCName,
+					nil,
+					map[string]string{"encrypted": "false"},
+					deletePolicy)
+				if err != nil {
+					framework.Failf("failed to create storageclass: %v", err)
+				}
+				// set up PVC
+				pvc, err := loadPVC(pvcPath)
+				if err != nil {
+					framework.Failf("failed to load PVC: %v", err)
+				}
+				pvc.Namespace = f.UniqueName
+				err = createPVCAndvalidatePV(f.ClientSet, pvc, deployTimeout)
+				if err != nil {
+					framework.Failf("failed to create PVC: %v", err)
+				}
+
+				// validate created backend rbd images
+				validateRBDImageCount(f, 1, defaultRBDPool)
+				validateOmapCount(f, 1, rbdType, defaultRBDPool, volumesType)
+
+				// clean up after ourselves
+				err = deletePVCAndValidatePV(f.ClientSet, pvc, deployTimeout)
+				if err != nil {
+					framework.Failf("failed to  delete PVC: %v", err)
+				}
+				// validate created backend rbd images
+				validateRBDImageCount(f, 0, defaultRBDPool)
+				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
+
+				err = deleteResource(rbdExamplePath + "storageclass.yaml")
+				if err != nil {
+					framework.Failf("failed to delete storageclass: %v", err)
+				}
+				err = createRBDStorageClass(f.ClientSet, f, defaultSCName, nil, nil, deletePolicy)
+				if err != nil {
+					framework.Failf("failed to create storageclass: %v", err)
+				}
+			})
+
 			By("validate RBD static FileSystem PVC", func() {
 				err := validateRBDStaticPV(f, appPath, false, false)
 				if err != nil {
@@ -3697,7 +3796,7 @@ var _ = Describe("RBD", func() {
 				validateRBDImageCount(f, 0, defaultRBDPool)
 				validateOmapCount(f, 0, rbdType, defaultRBDPool, volumesType)
 
-				// Create a PVC and bind it to an app within the namesapce
+				// Create a PVC and bind it to an app within the namespace
 				err = validatePVCAndAppBinding(pvcPath, appPath, f)
 				if err != nil {
 					framework.Failf("failed to validate pvc and application binding: %v", err)

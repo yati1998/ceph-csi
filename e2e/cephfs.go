@@ -23,7 +23,7 @@ import (
 	"sync"
 
 	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
-	. "github.com/onsi/ginkgo/v2" // nolint
+	. "github.com/onsi/ginkgo/v2" //nolint:golint // e2e uses By() and other Ginkgo functions
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
@@ -67,6 +67,7 @@ func deleteCephfsPlugin() {
 }
 
 func createORDeleteCephfsResources(action kubectlAction) {
+	cephConfigFile := getConfigFile(cephConfconfigMap, deployPath, examplePath)
 	resources := []ResourceDeployer{
 		// shared resources
 		&yamlResource{
@@ -74,7 +75,7 @@ func createORDeleteCephfsResources(action kubectlAction) {
 			allowMissing: true,
 		},
 		&yamlResource{
-			filename:     examplePath + cephConfconfigMap,
+			filename:     cephConfigFile,
 			allowMissing: true,
 		},
 		// dependencies for provisioner
@@ -227,7 +228,7 @@ var _ = Describe(cephfsType, func() {
 			logsCSIPods("app=csi-cephfsplugin", c)
 
 			// log all details from the namespace where Ceph-CSI is deployed
-			e2edebug.DumpAllNamespaceInfo(c, cephCSINamespace)
+			e2edebug.DumpAllNamespaceInfo(context.TODO(), c, cephCSINamespace)
 		}
 		err := deleteConfigMap(cephFSDirPath)
 		if err != nil {
@@ -317,6 +318,25 @@ var _ = Describe(cephfsType, func() {
 					}
 				})
 			}
+
+			By("verify mountOptions support", func() {
+				err := createCephfsStorageClass(f.ClientSet, f, true, nil)
+				if err != nil {
+					framework.Failf("failed to create CephFS storageclass: %v", err)
+				}
+
+				err = verifySeLinuxMountOption(f, pvcPath, appPath,
+					cephFSDeamonSetName, cephFSContainerName, cephCSINamespace)
+				if err != nil {
+					framework.Failf("failed to verify mount options: %v", err)
+				}
+
+				err = deleteResource(cephFSExamplePath + "storageclass.yaml")
+				if err != nil {
+					framework.Failf("failed to delete CephFS storageclass: %v", err)
+				}
+			})
+
 			By("verify generic ephemeral volume support", func() {
 				err := createCephfsStorageClass(f.ClientSet, f, true, nil)
 				if err != nil {
@@ -1943,8 +1963,6 @@ var _ = Describe(cephfsType, func() {
 				if err != nil {
 					framework.Failf("failed to delete PVC or application: %v", err)
 				}
-
-				validateCephFSSnapshotCount(f, 0, subvolumegroup, pv)
 
 				err = deletePVCAndApp("", f, pvc, app)
 				if err != nil {

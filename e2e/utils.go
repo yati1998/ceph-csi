@@ -248,9 +248,9 @@ func getMons(ns string, c kubernetes.Interface) ([]string, error) {
 
 	var svcList *v1.ServiceList
 	t := time.Duration(deployTimeout) * time.Minute
-	err := wait.PollImmediate(poll, t, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(context.TODO(), poll, t, true, func(ctx context.Context) (bool, error) {
 		var svcErr error
-		svcList, svcErr = c.CoreV1().Services(ns).List(context.TODO(), opt)
+		svcList, svcErr = c.CoreV1().Services(ns).List(ctx, opt)
 		if svcErr != nil {
 			if isRetryableAPIError(svcErr) {
 				return false, nil
@@ -486,6 +486,7 @@ func validatePVCAndAppBinding(pvcPath, appPath string, f *framework.Framework) e
 	if err != nil {
 		return err
 	}
+
 	err = deletePVCAndApp("", f, pvc, app)
 
 	return err
@@ -508,6 +509,50 @@ func getMountType(selector, mountPath string, f *framework.Framework) (string, e
 }
 
 func validateNormalUserPVCAccess(pvcPath string, f *framework.Framework) error {
+	writeTest := func(ns string, opts *metav1.ListOptions) error {
+		_, stdErr, err := execCommandInPod(f, "echo testing > /target/testing", ns, opts)
+		if err != nil {
+			return fmt.Errorf("failed to exec command in pod: %w", err)
+		}
+		if stdErr != "" {
+			return fmt.Errorf("failed to touch a file as non-root user %v", stdErr)
+		}
+
+		return nil
+	}
+
+	return validateNormalUserPVCAccessFunc(pvcPath, f, writeTest)
+}
+
+func validateInodeCount(pvcPath string, f *framework.Framework, inodes int) error {
+	countInodes := func(ns string, opts *metav1.ListOptions) error {
+		stdOut, stdErr, err := execCommandInPod(f, "df --output=itotal /target | tail -n1", ns, opts)
+		if err != nil {
+			return fmt.Errorf("failed to exec command in pod: %w", err)
+		}
+		if stdErr != "" {
+			return fmt.Errorf("failed to list inodes in pod: %v", stdErr)
+		}
+
+		itotal, err := strconv.Atoi(strings.TrimSpace(stdOut))
+		if err != nil {
+			return fmt.Errorf("failed to parse itotal %q to int: %w", strings.TrimSpace(stdOut), err)
+		}
+		if inodes != itotal {
+			return fmt.Errorf("expected inodes (%d) do not match itotal on volume (%d)", inodes, itotal)
+		}
+
+		return nil
+	}
+
+	return validateNormalUserPVCAccessFunc(pvcPath, f, countInodes)
+}
+
+func validateNormalUserPVCAccessFunc(
+	pvcPath string,
+	f *framework.Framework,
+	validate func(ns string, opts *metav1.ListOptions) error,
+) error {
 	pvc, err := loadPVC(pvcPath)
 	if err != nil {
 		return err
@@ -571,12 +616,10 @@ func validateNormalUserPVCAccess(pvcPath string, f *framework.Framework) error {
 	opt := metav1.ListOptions{
 		LabelSelector: "app=pod-run-as-non-root",
 	}
-	_, stdErr, err := execCommandInPod(f, "echo testing > /target/testing", app.Namespace, &opt)
+
+	err = validate(app.Namespace, &opt)
 	if err != nil {
-		return fmt.Errorf("failed to exec command in pod: %w", err)
-	}
-	if stdErr != "" {
-		return fmt.Errorf("failed to touch a file as non-root user %v", stdErr)
+		return fmt.Errorf("failed to run validation function: %w", err)
 	}
 
 	// metrics for BlockMode was added in Kubernetes 1.22
@@ -809,7 +852,7 @@ func writeDataAndCalChecksum(app *v1.Pod, opt *metav1.ListOptions, f *framework.
 	return checkSum, nil
 }
 
-// nolint:gocyclo,gocognit,nestif,cyclop // reduce complexity
+//nolint:gocyclo,gocognit,nestif,cyclop // reduce complexity
 func validatePVCClone(
 	totalCount int,
 	sourcePvcPath, sourceAppPath, clonePvcPath, clonePvcAppPath,
@@ -1024,7 +1067,7 @@ func validatePVCClone(
 	validateRBDImageCount(f, 0, defaultRBDPool)
 }
 
-// nolint:gocyclo,gocognit,nestif,cyclop // reduce complexity
+//nolint:gocyclo,gocognit,nestif,cyclop // reduce complexity
 func validatePVCSnapshot(
 	totalCount int,
 	pvcPath, appPath, snapshotPath, pvcClonePath, appClonePath string,
@@ -1486,13 +1529,14 @@ func validateController(
 	return deleteResource(rbdExamplePath + "storageclass.yaml")
 }
 
-// nolint:deadcode,unused // Unused code will be used in future.
 // k8sVersionGreaterEquals checks the ServerVersion of the Kubernetes cluster
 // and compares it to the major.minor version passed. In case the version of
 // the cluster is equal or higher to major.minor, `true` is returned, `false`
 // otherwise.
 // If fetching the ServerVersion of the Kubernetes cluster fails, the calling
 // test case is marked as `FAILED` and gets aborted.
+//
+//nolint:deadcode,unused // Unused code will be used in future.
 func k8sVersionGreaterEquals(c kubernetes.Interface, major, minor int) bool {
 	v, err := c.Discovery().ServerVersion()
 	if err != nil {
@@ -1516,8 +1560,8 @@ func waitForJobCompletion(c kubernetes.Interface, ns, job string, timeout int) e
 
 	framework.Logf("waiting for Job %s/%s to be in state %q", ns, job, batch.JobComplete)
 
-	return wait.PollImmediate(poll, t, func() (bool, error) {
-		j, err := c.BatchV1().Jobs(ns).Get(context.TODO(), job, metav1.GetOptions{})
+	return wait.PollUntilContextTimeout(context.TODO(), poll, t, true, func(ctx context.Context) (bool, error) {
+		j, err := c.BatchV1().Jobs(ns).Get(ctx, job, metav1.GetOptions{})
 		if err != nil {
 			if isRetryableAPIError(err) {
 				return false, nil
@@ -1564,7 +1608,7 @@ func retryKubectlInput(namespace string, action kubectlAction, data string, t in
 	framework.Logf("waiting for kubectl (%s -f args %s) to finish", action, args)
 	start := time.Now()
 
-	return wait.PollImmediate(poll, timeout, func() (bool, error) {
+	return wait.PollUntilContextTimeout(context.TODO(), poll, timeout, true, func(_ context.Context) (bool, error) {
 		cmd := []string{}
 		if len(args) != 0 {
 			cmd = append(cmd, strings.Join(args, ""))
@@ -1603,7 +1647,7 @@ func retryKubectlFile(namespace string, action kubectlAction, filename string, t
 	framework.Logf("waiting for kubectl (%s -f %q args %s) to finish", action, filename, args)
 	start := time.Now()
 
-	return wait.PollImmediate(poll, timeout, func() (bool, error) {
+	return wait.PollUntilContextTimeout(context.TODO(), poll, timeout, true, func(_ context.Context) (bool, error) {
 		cmd := []string{}
 		if len(args) != 0 {
 			cmd = append(cmd, strings.Join(args, ""))
@@ -1638,14 +1682,15 @@ func retryKubectlFile(namespace string, action kubectlAction, filename string, t
 // retryKubectlArgs takes a namespace and action telling kubectl what to do
 // with the passed arguments. This function retries until no error occurred, or
 // the timeout passed.
-// nolint:unparam // retryKubectlArgs will be used with kubectlDelete arg later on.
+//
+//nolint:unparam // retryKubectlArgs will be used with kubectlDelete arg later on.
 func retryKubectlArgs(namespace string, action kubectlAction, t int, args ...string) error {
 	timeout := time.Duration(t) * time.Minute
 	args = append([]string{string(action)}, args...)
 	framework.Logf("waiting for kubectl (%s args) to finish", args)
 	start := time.Now()
 
-	return wait.PollImmediate(poll, timeout, func() (bool, error) {
+	return wait.PollUntilContextTimeout(context.TODO(), poll, timeout, true, func(_ context.Context) (bool, error) {
 		_, err := e2ekubectl.RunKubectl(namespace, args...)
 		if err != nil {
 			if isRetryableAPIError(err) {
@@ -1686,4 +1731,15 @@ func rwopMayFail(err error) bool {
 	}
 
 	return !rwopSupported
+}
+
+// getConfigFile returns the config file path at the preferred location if it
+// exists there. Returns the fallback location otherwise.
+func getConfigFile(filename, preferred, fallback string) string {
+	configFile := preferred + filename
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		configFile = fallback + filename
+	}
+
+	return configFile
 }

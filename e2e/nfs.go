@@ -24,7 +24,7 @@ import (
 	"time"
 
 	snapapi "github.com/kubernetes-csi/external-snapshotter/client/v6/apis/volumesnapshot/v1"
-	. "github.com/onsi/ginkgo/v2" // nolint
+	. "github.com/onsi/ginkgo/v2" //nolint:golint // e2e uses By() and other Ginkgo functions
 	v1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,6 +43,7 @@ var (
 	nfsRookCephNFS     = "rook-nfs.yaml"
 	nfsDeploymentName  = "csi-nfsplugin-provisioner"
 	nfsDeamonSetName   = "csi-nfsplugin"
+	nfsContainerName   = "csi-nfsplugin"
 	nfsDirPath         = "../deploy/nfs/kubernetes/"
 	nfsExamplePath     = examplePath + "nfs/"
 	nfsPoolName        = ".nfs"
@@ -79,6 +80,7 @@ func deleteNFSPlugin() {
 }
 
 func createORDeleteNFSResources(f *framework.Framework, action kubectlAction) {
+	cephConfigFile := getConfigFile(cephConfconfigMap, deployPath, examplePath)
 	resources := []ResourceDeployer{
 		// shared resources
 		&yamlResource{
@@ -86,7 +88,7 @@ func createORDeleteNFSResources(f *framework.Framework, action kubectlAction) {
 			allowMissing: true,
 		},
 		&yamlResource{
-			filename:     examplePath + cephConfconfigMap,
+			filename:     cephConfigFile,
 			allowMissing: true,
 		},
 		// dependencies for provisioner
@@ -183,8 +185,8 @@ func createNFSStorageClass(
 
 	timeout := time.Duration(deployTimeout) * time.Minute
 
-	return wait.PollImmediate(poll, timeout, func() (bool, error) {
-		_, err = c.StorageV1().StorageClasses().Create(context.TODO(), &sc, metav1.CreateOptions{})
+	return wait.PollUntilContextTimeout(context.TODO(), poll, timeout, true, func(ctx context.Context) (bool, error) {
+		_, err = c.StorageV1().StorageClasses().Create(ctx, &sc, metav1.CreateOptions{})
 		if err != nil {
 			framework.Logf("error creating StorageClass %q: %v", sc.Name, err)
 			if apierrs.IsAlreadyExists(err) {
@@ -294,7 +296,7 @@ var _ = Describe("nfs", func() {
 			logsCSIPods("app=csi-nfsplugin", c)
 
 			// log all details from the namespace where Ceph-CSI is deployed
-			e2edebug.DumpAllNamespaceInfo(c, cephCSINamespace)
+			e2edebug.DumpAllNamespaceInfo(context.TODO(), c, cephCSINamespace)
 		}
 		err := deleteConfigMap(nfsDirPath)
 		if err != nil {
@@ -362,6 +364,24 @@ var _ = Describe("nfs", func() {
 				}
 			})
 
+			By("verify mountOptions support", func() {
+				err := createNFSStorageClass(f.ClientSet, f, false, nil)
+				if err != nil {
+					framework.Failf("failed to create NFS storageclass: %v", err)
+				}
+
+				err = verifySeLinuxMountOption(f, pvcPath, appPath,
+					nfsDeamonSetName, nfsContainerName, cephCSINamespace)
+				if err != nil {
+					framework.Failf("failed to verify mount options: %v", err)
+				}
+
+				err = deleteResource(nfsExamplePath + "storageclass.yaml")
+				if err != nil {
+					framework.Failf("failed to delete NFS storageclass: %v", err)
+				}
+			})
+
 			By("verify RWOP volume support", func() {
 				err := createNFSStorageClass(f.ClientSet, f, false, nil)
 				if err != nil {
@@ -408,7 +428,24 @@ var _ = Describe("nfs", func() {
 			})
 
 			By("create a storageclass with pool and a PVC then bind it to an app", func() {
-				err := createNFSStorageClass(f.ClientSet, f, false, nil)
+				err := createNFSStorageClass(f.ClientSet, f, true, nil)
+				if err != nil {
+					framework.Failf("failed to create NFS storageclass: %v", err)
+				}
+				err = validatePVCAndAppBinding(pvcPath, appPath, f)
+				if err != nil {
+					framework.Failf("failed to validate NFS pvc and application binding: %v", err)
+				}
+				err = deleteResource(nfsExamplePath + "storageclass.yaml")
+				if err != nil {
+					framework.Failf("failed to delete NFS storageclass: %v", err)
+				}
+			})
+
+			By("create a storageclass with sys,krb5i security and a PVC then bind it to an app", func() {
+				err := createNFSStorageClass(f.ClientSet, f, false, map[string]string{
+					"secTypes": "sys,krb5i",
+				})
 				if err != nil {
 					framework.Failf("failed to create NFS storageclass: %v", err)
 				}

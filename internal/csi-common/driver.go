@@ -17,8 +17,6 @@ limitations under the License.
 package csicommon
 
 import (
-	"fmt"
-
 	"github.com/ceph/ceph-csi/internal/util/log"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -71,6 +69,8 @@ func NewCSIDriver(name, v, nodeID string) *CSIDriver {
 
 // ValidateControllerServiceRequest validates the controller
 // plugin capabilities.
+//
+//nolint:interfacer // c can be of type fmt.Stringer, but that does not make the API clearer
 func (d *CSIDriver) ValidateControllerServiceRequest(c csi.ControllerServiceCapability_RPC_Type) error {
 	if c == csi.ControllerServiceCapability_RPC_UNKNOWN {
 		return nil
@@ -82,7 +82,7 @@ func (d *CSIDriver) ValidateControllerServiceRequest(c csi.ControllerServiceCapa
 		}
 	}
 
-	return status.Error(codes.InvalidArgument, fmt.Sprintf("%s", c)) //nolint
+	return status.Error(codes.InvalidArgument, c.String())
 }
 
 // AddControllerServiceCapabilities stores the controller capabilities

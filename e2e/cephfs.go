@@ -44,6 +44,7 @@ var (
 	cephFSExamplePath     = examplePath + "cephfs/"
 	subvolumegroup        = "e2e"
 	fileSystemName        = "myfs"
+	fileSystemPoolName    = "myfs-replicated"
 )
 
 func deployCephfsPlugin() {
@@ -394,11 +395,19 @@ var _ = Describe(cephfsType, func() {
 				}
 				validateSubvolumeCount(f, 1, fileSystemName, subvolumegroup)
 				validateOmapCount(f, 1, cephfsType, metadataPool, volumesType)
+				pvcName := app.Spec.Volumes[0].Name
 				// delete pod
 				err = deletePod(app.Name, app.Namespace, f.ClientSet, deployTimeout)
 				if err != nil {
 					framework.Failf("failed to delete application: %v", err)
 				}
+
+				// wait for the associated PVC to be deleted
+				err = waitForPVCToBeDeleted(f.ClientSet, app.Namespace, pvcName, deployTimeout)
+				if err != nil {
+					framework.Failf("failed to wait for PVC deletion: %v", err)
+				}
+
 				validateSubvolumeCount(f, 0, fileSystemName, subvolumegroup)
 				validateOmapCount(f, 0, cephfsType, metadataPool, volumesType)
 				err = deleteResource(cephFSExamplePath + "storageclass.yaml")
@@ -1613,6 +1622,7 @@ var _ = Describe(cephfsType, func() {
 						scOpts := map[string]string{
 							"encrypted":       "true",
 							"encryptionKMSID": kmsID,
+							"pool":            fileSystemPoolName,
 						}
 
 						err = createCephfsStorageClass(f.ClientSet, f, true, scOpts)

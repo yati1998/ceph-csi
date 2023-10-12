@@ -3,6 +3,8 @@ version: 2
 enable-beta-ecosystems: true
 updates:
   - package-ecosystem: "gomod"
+    # ODF only: disable PR creation, synced from upstream
+    open-pull-requests-limit: 0
     directory: "/"
     schedule:
       interval: "weekly"
@@ -54,6 +56,8 @@ updates:
       - dependency-name: "k8s.io/pod-security-admission"
       - dependency-name: "k8s.io/sample-apiserver"
   - package-ecosystem: "gomod"
+    # ODF only: disable PR creation, synced from upstream
+    open-pull-requests-limit: 0
     directory: "/actions/retest"
     schedule:
       interval: "weekly"
@@ -65,6 +69,8 @@ updates:
     commit-message:
       prefix: "rebase"
   - package-ecosystem: "gomod"
+    # ODF only: disable PR creation, synced from upstream
+    open-pull-requests-limit: 0
     directory: "/api"
     schedule:
       interval: "weekly"
@@ -89,6 +95,8 @@ updates:
     commit-message:
       prefix: "rebase"
   - package-ecosystem: "github-actions"
+    # ODF only: disable PR creation, synced from upstream
+    open-pull-requests-limit: 0
     directory: "/"
     schedule:
       interval: "weekly"

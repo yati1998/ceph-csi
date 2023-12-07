@@ -40,15 +40,15 @@ make image-cephcsi
 | `--pidlimit`              | _0_                         | Configure the PID limit in cgroups. The container runtime can restrict the number of processes/tasks which can cause problems while provisioning (or deleting) a large number of volumes. A value of `-1` configures the limit to the maximum, `0` does not configure limits at all. |
 | `--metricsport`           | `8080`                      | TCP port for liveness metrics requests                                                                                                                                                                                                                                               |
 | `--metricspath`           | `/metrics`                  | Path of prometheus endpoint where metrics will be available                                                                                                                                                                                                                          |
-| `--enablegrpcmetrics`     | `false`                     | [Deprecated] Enable grpc metrics collection  and start prometheus server                                                                                                                                                                                                             |
 | `--polltime`              | `60s`                       | Time interval in between each poll                                                                                                                                                                                                                                                   |
 | `--timeout`               | `3s`                        | Probe timeout in seconds                                                                                                                                                                                                                                                             |
 | `--clustername`           | _empty_                     | Cluster name to set on subvolume                                                                                                                                                                                                                                                     |
-| `--histogramoption`       | `0.5,2,6`                   | [Deprecated] Histogram option for grpc metrics, should be comma separated value (ex:= "0.5,2,6" where start=0.5 factor=2, count=6)                                                                                                                                                   |
 | `--forcecephkernelclient` | `false`                     | Force enabling Ceph Kernel clients for mounting on kernels < 4.17                                                                                                                                                                                                                    |
-| `--kernelmountoptions`    | _empty_                     | Comma separated string of mount options accepted by cephfs kernel mounter                                                                                                                                                                                                               |
-| `--fusemountoptions`      | _empty_                     | Comma separated string of mount options accepted by ceph-fuse mounter                                                                                                                                                                                                               |
+| `--kernelmountoptions`    | _empty_                     | Comma separated string of mount options accepted by cephfs kernel mounter.<br>`Note: These options will be replaced if kernelMountOptions are defined in the ceph-csi-config ConfigMap for the specific cluster.`                                                                                                                                                                                                               |
+| `--fusemountoptions`      | _empty_                     | Comma separated string of mount options accepted by ceph-fuse mounter.<br>`Note: These options will be replaced if fuseMountOptions are defined in the ceph-csi-config ConfigMap for the specific cluster.`                                                                                                                                                                                                               |
 | `--domainlabels`          | _empty_                     | Kubernetes node labels to use as CSI domain labels for topology aware provisioning, should be a comma separated value (ex:= "failure-domain/region,failure-domain/zone")                                                                                                             |
+| `--enable-read-affinity` | `false`                       | enable read affinity                                                                                                                                                                                                                                                                 |
+| `--crush-location-labels`| _empty_                       | Kubernetes node labels that determine the CRUSH location the node belongs to, separated by ','.<br>`Note: These labels will be replaced if crush location labels are defined in the ceph-csi-config ConfigMap for the specific cluster.`                                                                                                                                                                                       |
 
 **NOTE:** The parameter `-forcecephkernelclient` enables the Kernel
 CephFS mounter on kernels < 4.17.
@@ -77,6 +77,7 @@ you're running it inside a k8s cluster and find the config itself).
 | `csi.storage.k8s.io/provisioner-secret-namespace`, `csi.storage.k8s.io/node-stage-secret-namespace` | for Kubernetes | Namespaces of the above Secret objects                                                                                                                                                                                  |
 | `encrypted`                                                                                         | no             | disabled by default, use `"true"` to enable fscrypt encryption on PVC and `"false"` to disable it. **Do not change for existing storageclasses**                                                                          |
 | `encryptionKMSID`                                                                                   | no             | required if encryption is enabled and a kms is used to store passphrases                                                                                                                                                |
+| `extraDeploy` | no | array of extra objects to deploy with the release |
 
 **NOTE:** An accompanying CSI configuration file, needs to be provided to the
 running pods. Refer to [Creating CSI configuration](../examples/README.md#creating-csi-configuration)
@@ -225,6 +226,27 @@ The Helm chart is located in `charts/ceph-csi-cephfs`.
 
 [See the Helm chart readme for installation instructions.](../charts/ceph-csi-cephfs/README.md)
 
+## Read Affinity using crush locations for CephFS subvolumes
+
+Ceph CSI supports mounting CephFS subvolumes with kernel mount options
+`"read_from_replica=localize,crush_location=type1:value1|type2:value2"` to
+allow serving reads from the most local OSD (according to OSD locations as
+defined in the CRUSH map).
+
+This can be enabled by adding labels to Kubernetes nodes like
+`"topology.io/region=east"` and `"topology.io/zone=east-zone1"` and
+passing command line arguments `"--enable-read-affinity=true"` and
+`"--crush-location-labels=topology.io/zone,topology.io/region"` to Ceph CSI
+CephFS daemonset pod "csi-cephfsplugin" container, resulting in Ceph CSI adding
+`"--options read_from_replica=localize,crush_location=zone:east-zone1|region:east"`
+kernel mount options during cephfs mount operation.
+If enabled, this option will be added to all CephFS subvolumes mapped by Ceph CSI.
+Well known labels can be found
+[here](https://kubernetes.io/docs/reference/labels-annotations-taints/).
+
+>Note: Label values will have all its dots `"."` normalized with dashes `"-"`
+in order for it to work with ceph CRUSH map.
+
 ## CephFS Volume Encryption
 
 Requires fscrypt support in the Linux kernel and Ceph.
@@ -241,3 +263,9 @@ However, not all KMS are supported in order to be compatible with
 [fscrypt](https://github.com/google/fscrypt). In general KMS that
 either store secrets to use directly (Vault), or allow access to the
 plain password (Kubernetes Secrets) work.
+
+## CephFS PVC Provisioning
+
+Requires subvolumegroup to be created before provisioning the PVC.
+If the subvolumegroup provided in `ceph-csi-config` ConfigMap is missing
+in the ceph cluster, the PVC creation will fail and will stay in `Pending` state.

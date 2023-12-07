@@ -37,11 +37,9 @@ make image-cephcsi
 | `--pidlimit`             | _0_                           | Configure the PID limit in cgroups. The container runtime can restrict the number of processes/tasks which can cause problems while provisioning (or deleting) a large number of volumes. A value of `-1` configures the limit to the maximum, `0` does not configure limits at all. |
 | `--metricsport`          | `8080`                        | TCP port for liveness metrics requests                                                                                                                                                                                                                                               |
 | `--metricspath`          | `"/metrics"`                  | Path of prometheus endpoint where metrics will be available                                                                                                                                                                                                                          |
-| `--enablegrpcmetrics`    | `false`                       | [Deprecated] Enable grpc metrics collection  and start prometheus server                                                                                                                                                                                                             |
 | `--polltime`             | `"60s"`                       | Time interval in between each poll                                                                                                                                                                                                                                                   |
 | `--timeout`              | `"3s"`                        | Probe timeout in seconds                                                                                                                                                                                                                                                             |
 | `--clustername`          | _empty_                       | Cluster name to set on RBD image                                                                                                                                                                                                                                                     |
-| `--histogramoption`      | `0.5,2,6`                     | [Deprecated] Histogram option for grpc metrics, should be comma separated value (ex:= "0.5,2,6" where start=0.5 factor=2, count=6)                                                                                                                                                   |
 | `--domainlabels`         | _empty_                       | Kubernetes node labels to use as CSI domain labels for topology aware provisioning, should be a comma separated value (ex:= "failure-domain/region,failure-domain/zone")                                                                                                             |
 | `--rbdhardmaxclonedepth` | `8`                           | Hard limit for maximum number of nested volume clones that are taken before a flatten occurs                                                                                                                                                                                         |
 | `--rbdsoftmaxclonedepth` | `4`                           | Soft limit for maximum number of nested volume clones that are taken before a flatten occurs                                                                                                                                                                                         |
@@ -49,7 +47,7 @@ make image-cephcsi
 | `--maxsnapshotsonimage`  | `450`                         | Maximum number of snapshots allowed on rbd image without flattening                                                                                                                                                                                                                  |
 | `--setmetadata`          | `false`                       | Set metadata on volume                                                                                                                                                                                                                                                               |
 | `--enable-read-affinity` | `false`                       | enable read affinity                                                                                                                                                                                                                                                                 |
-| `--crush-location-labels`| _empty_                       | Kubernetes node labels that determine the CRUSH location the node belongs to, separated by ','                                                                                                                                                                                       |
+| `--crush-location-labels`| _empty_                       | Kubernetes node labels that determine the CRUSH location the node belongs to, separated by ','.<br>`Note: These labels will be replaced if crush location labels are defined in the ceph-csi-config ConfigMap for the specific cluster.`                                                                                                                                                                                       |
 
 **Available volume parameters:**
 
@@ -74,6 +72,7 @@ make image-cephcsi
 | `stripeUnit`                                                                                        | no                   | stripe unit in bytes                                                                                                                                                                                                                                                                               |
 | `stripeCount`                                                                                       | no                   | objects to stripe over before looping                                                                                                                                                                                                                                                              |
 | `objectSize`                                                                                        | no                   | object size in bytes                                                                                                                                                                                                                                                                               |
+| `extraDeploy` | no | array of extra objects to deploy with the release |
 
 **NOTE:** An accompanying CSI configuration file, needs to be provided to the
 running pods. Refer to [Creating CSI configuration](../examples/README.md#creating-csi-configuration)
@@ -223,6 +222,12 @@ krbd options during rbd map operation.
 If enabled, this option will be added to all RBD volumes mapped by Ceph CSI.
 Well known labels can be found
 [here](https://kubernetes.io/docs/reference/labels-annotations-taints/).
+
+Read affinity can be configured for individual clusters within the
+`ceph-csi-config` ConfigMap. This allows configuring the crush location labels
+for each ceph cluster separately. The crush location labels specified in the
+ConfigMap will supersede  those provided via command line argument
+`--crush-location-labels`.
 
 >Note: Label values will have all its dots `"."` normalized with dashes `"-"`
 in order for it to work with ceph CRUSH map.

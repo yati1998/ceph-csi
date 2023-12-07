@@ -32,6 +32,7 @@ RUN source /build.env \
 	gcc \
 	findutils \
 	librados-devel \
+        libcephfs-devel \
 	librbd-devel \
 	openssl \
 	rubygems \
@@ -56,6 +57,7 @@ RUN source /build.env \
     && npm install @commitlint/cli@"${COMMITLINT_VERSION}" \
     && popd \
     && git config --global --add safe.directory ${CEPHCSIPATH} \
+    && go install github.com/augmentable-dev/tickgit/cmd/tickgit@latest \
     && true
 
 WORKDIR ${CEPHCSIPATH}

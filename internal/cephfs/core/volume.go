@@ -199,25 +199,15 @@ func (s *subVolumeClient) GetSubVolumeInfo(ctx context.Context) (*Subvolume, err
 type operationState int64
 
 const (
-	unknown operationState = iota
-	supported
+	supported operationState = iota
 	unsupported
 )
 
 type localClusterState struct {
-	// set the enum value i.e., unknown, supported,
+	// set the enum value i.e., supported or
 	// unsupported as per the state of the cluster.
-	resizeState                 operationState
 	subVolMetadataState         operationState
 	subVolSnapshotMetadataState operationState
-	// A cluster can have multiple filesystem for that we need to have a map of
-	// subvolumegroups to check filesystem is created nor not.
-	// set true once a subvolumegroup is created
-	// for corresponding filesystem in a cluster.
-	subVolumeGroupsCreated map[string]bool
-	// subVolumeGroupsRWMutex is used to protect subVolumeGroupsCreated map
-	//  against concurrent writes while allowing multiple readers.
-	subVolumeGroupsRWMutex sync.RWMutex
 }
 
 func newLocalClusterState(clusterID string) {
@@ -241,24 +231,6 @@ func (s *subVolumeClient) CreateVolume(ctx context.Context) error {
 		return err
 	}
 
-	// create subvolumegroup if not already created for the cluster.
-	if !s.isSubVolumeGroupCreated() {
-		opts := fsAdmin.SubVolumeGroupOptions{}
-		err = ca.CreateSubVolumeGroup(s.FsName, s.SubvolumeGroup, &opts)
-		if err != nil {
-			log.ErrorLog(
-				ctx,
-				"failed to create subvolume group %s, for the vol %s: %s",
-				s.SubvolumeGroup,
-				s.VolID,
-				err)
-
-			return err
-		}
-		log.DebugLog(ctx, "cephfs: created subvolume group %s", s.SubvolumeGroup)
-		s.updateSubVolumeGroupCreated(true)
-	}
-
 	opts := fsAdmin.SubVolumeOptions{
 		Size: fsAdmin.ByteCount(s.Size),
 	}
@@ -270,12 +242,6 @@ func (s *subVolumeClient) CreateVolume(ctx context.Context) error {
 	err = ca.CreateSubVolume(s.FsName, s.SubvolumeGroup, s.VolID, &opts)
 	if err != nil {
 		log.ErrorLog(ctx, "failed to create subvolume %s in fs %s: %s", s.VolID, s.FsName, err)
-
-		if errors.Is(err, rados.ErrNotFound) {
-			// Reset the subVolumeGroupsCreated so that we can try again to create the
-			// subvolumegroup in next request if the error is Not Found.
-			s.updateSubVolumeGroupCreated(false)
-		}
 
 		return err
 	}
@@ -300,39 +266,21 @@ func (s *subVolumeClient) ExpandVolume(ctx context.Context, bytesQuota int64) er
 	return err
 }
 
-// ResizeVolume will try to use ceph fs subvolume resize command to resize the
-// subvolume. If the command is not available as a fallback it will use
-// CreateVolume to resize the subvolume.
+// ResizeVolume will use the ceph fs subvolume resize command to resize the
+// subvolume.
 func (s *subVolumeClient) ResizeVolume(ctx context.Context, bytesQuota int64) error {
-	newLocalClusterState(s.clusterID)
-	// resize subvolume when either it's supported, or when corresponding
-	// clusterID key was not present.
-	if clusterAdditionalInfo[s.clusterID].resizeState == unknown ||
-		clusterAdditionalInfo[s.clusterID].resizeState == supported {
-		fsa, err := s.conn.GetFSAdmin()
-		if err != nil {
-			log.ErrorLog(ctx, "could not get FSAdmin, can not resize volume %s:", s.FsName, err)
+	fsa, err := s.conn.GetFSAdmin()
+	if err != nil {
+		log.ErrorLog(ctx, "could not get FSAdmin, can not resize volume %s:", s.FsName, err)
 
-			return err
-		}
-		_, err = fsa.ResizeSubVolume(s.FsName, s.SubvolumeGroup, s.VolID, fsAdmin.ByteCount(bytesQuota), true)
-		if err == nil {
-			clusterAdditionalInfo[s.clusterID].resizeState = supported
-
-			return nil
-		}
-		var invalid fsAdmin.NotImplementedError
-		// In case the error is other than invalid command return error to the caller.
-		if !errors.As(err, &invalid) {
-			log.ErrorLog(ctx, "failed to resize subvolume %s in fs %s: %s", s.VolID, s.FsName, err)
-
-			return err
-		}
+		return err
 	}
-	clusterAdditionalInfo[s.clusterID].resizeState = unsupported
-	s.Size = bytesQuota
+	_, err = fsa.ResizeSubVolume(s.FsName, s.SubvolumeGroup, s.VolID, fsAdmin.ByteCount(bytesQuota), true)
+	if err != nil {
+		log.ErrorLog(ctx, "failed to resize subvolume %s in fs %s: %s", s.VolID, s.FsName, err)
+	}
 
-	return s.CreateVolume(ctx)
+	return err
 }
 
 // PurgSubVolume removes the subvolume.

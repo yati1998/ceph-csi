@@ -27,6 +27,11 @@ serviceAccounts:
 #       - "<MONValue2>"
 #     rbd:
 #       netNamespaceFilePath: "{{ .kubeletDir }}/plugins/{{ .driverName }}/net"
+#     readAffinity:
+#       enabled: true
+#       crushLocationLabels:
+#         - topology.kubernetes.io/region
+#         - topology.kubernetes.io/zone
 csiConfig: []
 
 # Configuration details of clusterID,PoolID and FscID mapping
@@ -115,14 +120,14 @@ nodeplugin:
   registrar:
     image:
       repository: registry.k8s.io/sig-storage/csi-node-driver-registrar
-      tag: v2.9.0
+      tag: v2.9.1
       pullPolicy: IfNotPresent
     resources: {}
 
   plugin:
     image:
       repository: quay.io/cephcsi/cephcsi
-      tag: canary
+      tag: v3.10.0
       pullPolicy: IfNotPresent
     resources: {}
 
@@ -217,7 +222,7 @@ provisioner:
   provisioner:
     image:
       repository: registry.k8s.io/sig-storage/csi-provisioner
-      tag: v3.6.0
+      tag: v3.6.2
       pullPolicy: IfNotPresent
     resources: {}
     ## For further options, check
@@ -232,7 +237,7 @@ provisioner:
     enabled: true
     image:
       repository: registry.k8s.io/sig-storage/csi-attacher
-      tag: v4.4.0
+      tag: v4.4.2
       pullPolicy: IfNotPresent
     resources: {}
     ## For further options, check
@@ -244,7 +249,7 @@ provisioner:
     enabled: true
     image:
       repository: gcr.io/k8s-staging-sig-storage/csi-resizer
-      tag: v1.9.0
+      tag: v1.9.2
       pullPolicy: IfNotPresent
     resources: {}
     ## For further options, check
@@ -254,7 +259,7 @@ provisioner:
   snapshotter:
     image:
       repository: registry.k8s.io/sig-storage/csi-snapshotter
-      tag: v6.3.0
+      tag: v6.3.2
       pullPolicy: IfNotPresent
     resources: {}
     ## For further options, check
@@ -335,6 +340,17 @@ storageClass:
   # driver on node scheduled for application pod launch, but in the future this
   # should work with any mounter type.
   # tryOtherMounters: false
+
+  # (optional) Options to pass to the `mkfs` command while creating the
+  # filesystem on the RBD device. Check the man-page for the `mkfs` command
+  # for the filesystem for more details. When `mkfsOptions` is set here, the
+  # defaults will not be used, consider including them in this parameter.
+  #
+  # The default options depend on the csi.storage.k8s.io/fstype setting:
+  # - ext4: "-m0 -Enodiscard,lazy_itable_init=1,lazy_journal_init=1"
+  # - xfs: "-K"
+  #
+  # mkfsOptions: "-m0 -Ediscard -i1024"
 
   # (optional) uncomment the following to use rbd-nbd as mounter
   # on supported nodes
@@ -419,6 +435,22 @@ storageClass:
   # unmapOptions: "krbd:force;nbd:force"
   unmapOptions: ""
 
+  # (optional) stripe unit in bytes
+  # If set, stripeCount must also be specified
+  # For defaults, refer to
+  # https://docs.ceph.com/en/latest/man/8/rbd/#striping
+  stripeUnit: ""
+
+  # (optional) number of objects to stripe over before looping
+  # If set, stripeUnit must also be specified
+  # For defaults, refer to
+  # https://docs.ceph.com/en/latest/man/8/rbd/#striping
+  stripeCount: ""
+
+  # (optional) object size in bytes
+  # If set, must be a power of 2
+  objectSize: ""
+
   # The secrets have to contain Ceph credentials with required access
   # to the 'pool'.
   provisionerSecret: csi-rbd-secret
@@ -448,6 +480,7 @@ secret:
   # Specifies whether the secret should be created
   create: false
   name: csi-rbd-secret
+  annotations: {}
   # Key values correspond to a user name and its key, as defined in the
   # ceph cluster. User ID should have required access to the 'pool'
   # specified in the storage class
@@ -467,6 +500,9 @@ cephconf: |
     auth_cluster_required = cephx
     auth_service_required = cephx
     auth_client_required = cephx
+
+# Array of extra objects to deploy with the release
+extraDeploy: []
 
 #########################################################
 # Variables for 'internal' use please use with caution! #

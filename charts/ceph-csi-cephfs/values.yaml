@@ -92,14 +92,14 @@ nodeplugin:
   registrar:
     image:
       repository: registry.k8s.io/sig-storage/csi-node-driver-registrar
-      tag: v2.9.0
+      tag: v2.9.1
       pullPolicy: IfNotPresent
     resources: {}
 
   plugin:
     image:
       repository: quay.io/cephcsi/cephcsi
-      tag: canary
+      tag: v3.10.0
       pullPolicy: IfNotPresent
     resources: {}
 
@@ -184,7 +184,7 @@ provisioner:
   provisioner:
     image:
       repository: registry.k8s.io/sig-storage/csi-provisioner
-      tag: v3.6.0
+      tag: v3.6.2
       pullPolicy: IfNotPresent
     resources: {}
     ## For further options, check
@@ -199,7 +199,7 @@ provisioner:
     enabled: true
     image:
       repository: gcr.io/k8s-staging-sig-storage/csi-resizer
-      tag: v1.9.0
+      tag: v1.9.2
       pullPolicy: IfNotPresent
     resources: {}
     ## For further options, check
@@ -209,7 +209,7 @@ provisioner:
   snapshotter:
     image:
       repository: registry.k8s.io/sig-storage/csi-snapshotter
-      tag: v6.3.0
+      tag: v6.3.2
       pullPolicy: IfNotPresent
     resources: {}
     ## For further options, check
@@ -221,6 +221,17 @@ provisioner:
   tolerations: []
 
   affinity: {}
+
+# readAffinity:
+# Enable read affinity for CephFS subvolumes. Recommended to
+# set to true if running kernel 5.8 or newer.
+# enabled: false
+# Define which node labels to use as CRUSH location.
+# This should correspond to the values set in the CRUSH map.
+# NOTE: the value here serves as an example
+# crushLocationLabels:
+#   - topology.kubernetes.io/region
+#   - topology.kubernetes.io/zone
 
 # Mount the host /etc/selinux inside pods to support
 # selinux-enabled filesystems
@@ -288,6 +299,7 @@ secret:
   # Specifies whether the secret should be created
   create: false
   name: csi-cephfs-secret
+  annotations: {}
   # Key values correspond to a user name and its key, as defined in the
   # ceph cluster. User ID should have required access to the 'pool'
   # specified in the storage class
@@ -310,6 +322,9 @@ cephconf: |
     # adding 'fuse_big_writes = true' option by default to override this limit
     # see https://github.com/ceph/ceph-csi/issues/1928
     fuse_big_writes = true
+
+# Array of extra objects to deploy with the release
+extraDeploy: []
 
 #########################################################
 # Variables for 'internal' use please use with caution! #

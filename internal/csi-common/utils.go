@@ -28,10 +28,7 @@ import (
 	"github.com/ceph/ceph-csi/internal/util/log"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	rp "github.com/csi-addons/replication-lib-utils/protosanitizer"
-	"github.com/csi-addons/spec/lib/go/replication"
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -58,13 +55,18 @@ func NewVolumeCapabilityAccessMode(mode csi.VolumeCapability_AccessMode_Mode) *c
 }
 
 // NewDefaultNodeServer initializes default node server.
-func NewDefaultNodeServer(d *CSIDriver, t string, topology map[string]string) *DefaultNodeServer {
+func NewDefaultNodeServer(
+	d *CSIDriver, t, cliReadAffinityMapOptions string,
+	topology, nodeLabels map[string]string,
+) *DefaultNodeServer {
 	d.topology = topology
 
 	return &DefaultNodeServer{
-		Driver:  d,
-		Type:    t,
-		Mounter: mount.NewWithoutSystemd(""),
+		Driver:                 d,
+		Type:                   t,
+		Mounter:                mount.NewWithoutSystemd(""),
+		NodeLabels:             nodeLabels,
+		CLIReadAffinityOptions: cliReadAffinityMapOptions,
 	}
 }
 
@@ -93,30 +95,10 @@ func NewControllerServiceCapability(ctrlCap csi.ControllerServiceCapability_RPC_
 	}
 }
 
-// Add replication request names to the list when we implement more API's.
-func isReplicationRequest(req interface{}) bool {
-	isReplicationRequest := true
-	switch req.(type) {
-	case *replication.EnableVolumeReplicationRequest:
-	case *replication.DisableVolumeReplicationRequest:
-	case *replication.PromoteVolumeRequest:
-	case *replication.DemoteVolumeRequest:
-	case *replication.ResyncVolumeRequest:
-	default:
-		isReplicationRequest = false
-	}
-
-	return isReplicationRequest
-}
-
 // NewMiddlewareServerOption creates a new grpc.ServerOption that configures a
 // common format for log messages and other gRPC related handlers.
-func NewMiddlewareServerOption(withMetrics bool) grpc.ServerOption {
+func NewMiddlewareServerOption() grpc.ServerOption {
 	middleWare := []grpc.UnaryServerInterceptor{contextIDInjector, logGRPC, panicHandler}
-
-	if withMetrics {
-		middleWare = append(middleWare, grpc_prometheus.UnaryServerInterceptor)
-	}
 
 	return grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(middleWare...))
 }
@@ -151,19 +133,6 @@ func getReqID(req interface{}) string {
 
 	case *csi.NodeExpandVolumeRequest:
 		reqID = r.VolumeId
-
-	case *replication.EnableVolumeReplicationRequest:
-		reqID = r.VolumeId
-	case *replication.DisableVolumeReplicationRequest:
-		reqID = r.VolumeId
-
-	case *replication.PromoteVolumeRequest:
-		reqID = r.VolumeId
-	case *replication.DemoteVolumeRequest:
-		reqID = r.VolumeId
-
-	case *replication.ResyncVolumeRequest:
-		reqID = r.VolumeId
 	}
 
 	return reqID
@@ -193,18 +162,8 @@ func logGRPC(
 	handler grpc.UnaryHandler,
 ) (interface{}, error) {
 	log.ExtendedLog(ctx, "GRPC call: %s", info.FullMethod)
-	// TODO: remove the following check for next release
-	// refer to https://github.com/ceph/ceph-csi/issues/3314.
-	if isReplicationRequest(req) {
-		strippedMessage := protosanitizer.StripSecrets(req).String()
-		if !strings.Contains(strippedMessage, "***stripped***") {
-			strippedMessage = rp.StripReplicationSecrets(req).String()
-		}
+	log.TraceLog(ctx, "GRPC request: %s", protosanitizer.StripSecrets(req))
 
-		log.TraceLog(ctx, "GRPC request: %s", strippedMessage)
-	} else {
-		log.TraceLog(ctx, "GRPC request: %s", protosanitizer.StripSecrets(req))
-	}
 	resp, err := handler(ctx, req)
 	if err != nil {
 		klog.Errorf(log.Log(ctx, "GRPC error: %v"), err)
@@ -310,6 +269,12 @@ func FilesystemNodeGetVolumeStats(
 			Used:      requirePositive(inodesUsed),
 			Unit:      csi.VolumeUsage_INODES,
 		})
+	}
+
+	// include marker for a healthy volume by default
+	res.VolumeCondition = &csi.VolumeCondition{
+		Abnormal: false,
+		Message:  "volume is in a healthy condition",
 	}
 
 	return res, nil

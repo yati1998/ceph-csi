@@ -19,8 +19,8 @@ package core
 import (
 	"errors"
 	"fmt"
-	"strings"
 
+	libcephfs "github.com/ceph/go-ceph/cephfs"
 	fsAdmin "github.com/ceph/go-ceph/cephfs/admin"
 )
 
@@ -49,32 +49,6 @@ func (s *subVolumeClient) isUnsupportedSubVolMetadata(err error) bool {
 	clusterAdditionalInfo[s.clusterID].subVolMetadataState = supported
 
 	return true
-}
-
-// isSubVolumeGroupCreated returns true if subvolume group is created.
-func (s *subVolumeClient) isSubVolumeGroupCreated() bool {
-	newLocalClusterState(s.clusterID)
-	clusterAdditionalInfo[s.clusterID].subVolumeGroupsRWMutex.RLock()
-	defer clusterAdditionalInfo[s.clusterID].subVolumeGroupsRWMutex.RUnlock()
-
-	if clusterAdditionalInfo[s.clusterID].subVolumeGroupsCreated == nil {
-		return false
-	}
-
-	return clusterAdditionalInfo[s.clusterID].subVolumeGroupsCreated[s.SubvolumeGroup]
-}
-
-// updateSubVolumeGroupCreated updates subvolume group created map.
-// If the map is nil, it creates a new map and updates it.
-func (s *subVolumeClient) updateSubVolumeGroupCreated(state bool) {
-	clusterAdditionalInfo[s.clusterID].subVolumeGroupsRWMutex.Lock()
-	defer clusterAdditionalInfo[s.clusterID].subVolumeGroupsRWMutex.Unlock()
-
-	if clusterAdditionalInfo[s.clusterID].subVolumeGroupsCreated == nil {
-		clusterAdditionalInfo[s.clusterID].subVolumeGroupsCreated = make(map[string]bool)
-	}
-
-	clusterAdditionalInfo[s.clusterID].subVolumeGroupsCreated[s.SubvolumeGroup] = state
 }
 
 // setMetadata sets custom metadata on the subvolume in a volume as a
@@ -159,8 +133,7 @@ func (s *subVolumeClient) UnsetAllMetadata(keys []string) error {
 		if errors.Is(err, ErrSubVolMetadataNotSupported) {
 			return nil
 		}
-		// TODO: replace string comparison with errno.
-		if err != nil && !strings.Contains(err.Error(), "No such file or directory") {
+		if err != nil && !errors.Is(err, libcephfs.ErrNotExist) {
 			return fmt.Errorf("failed to unset metadata key %q on subvolume %v: %w", key, s, err)
 		}
 	}
@@ -170,8 +143,7 @@ func (s *subVolumeClient) UnsetAllMetadata(keys []string) error {
 	if errors.Is(err, ErrSubVolMetadataNotSupported) {
 		return nil
 	}
-	// TODO: replace string comparison with errno.
-	if err != nil && !strings.Contains(err.Error(), "No such file or directory") {
+	if err != nil && !errors.Is(err, libcephfs.ErrNotExist) {
 		return fmt.Errorf("failed to unset metadata key %q on subvolume %v: %w", clusterNameKey, s, err)
 	}
 

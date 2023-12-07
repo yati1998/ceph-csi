@@ -1226,7 +1226,7 @@ func validatePVCSnapshot(
 				checkSumClone, chErrs[n] = calculateSHA512sum(f, &a, filePath, &opt)
 				framework.Logf("checksum value for the clone is %s with pod name %s", checkSumClone, name)
 				if chErrs[n] != nil {
-					framework.Logf("failed to calculte checksum for clone: %s", chErrs[n])
+					framework.Logf("failed to calculate checksum for clone: %s", chErrs[n])
 				}
 				if checkSumClone != checkSum {
 					framework.Logf(
@@ -1852,4 +1852,32 @@ func checkExports(f *framework.Framework, clusterID, clientString string) bool {
 	}
 
 	return true
+}
+
+// createSubvolumegroup creates a subvolumegroup.
+func createSubvolumegroup(f *framework.Framework, fileSystemName, subvolumegroup string) error {
+	cmd := fmt.Sprintf("ceph fs subvolumegroup create %s %s", fileSystemName, subvolumegroup)
+	_, stdErr, err := execCommandInToolBoxPod(f, cmd, rookNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to exec command in toolbox: %w", err)
+	}
+	if stdErr != "" {
+		return fmt.Errorf("failed to create subvolumegroup %s : %v", subvolumegroup, stdErr)
+	}
+
+	return nil
+}
+
+// deleteSubvolumegroup creates a subvolumegroup.
+func deleteSubvolumegroup(f *framework.Framework, fileSystemName, subvolumegroup string) error {
+	cmd := fmt.Sprintf("ceph fs subvolumegroup rm %s %s", fileSystemName, subvolumegroup)
+	_, stdErr, err := execCommandInToolBoxPod(f, cmd, rookNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to exec command in toolbox: %w", err)
+	}
+	if stdErr != "" {
+		return fmt.Errorf("failed to remove subvolumegroup %s : %v", subvolumegroup, stdErr)
+	}
+
+	return nil
 }

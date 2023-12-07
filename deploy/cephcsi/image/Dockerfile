@@ -11,6 +11,7 @@ RUN dnf config-manager --disable \
     tcmu-runner,tcmu-runner-source,tcmu-runner-noarch,ceph-iscsi,ganesha || true
 
 RUN dnf -y update --nobest \
+       && dnf -y install nfs-utils \
        && dnf clean all \
        && rm -rf /var/cache/yum
 
@@ -36,7 +37,7 @@ RUN source /build.env && \
 RUN ${GOROOT}/bin/go version && ${GOROOT}/bin/go env
 
 RUN dnf -y install --nodocs \
-	librados-devel librbd-devel \
+	librados-devel librbd-devel libcephfs-devel \
 	/usr/bin/cc \
 	make \
 	git \

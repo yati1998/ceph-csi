@@ -45,8 +45,6 @@ type NodeServer struct {
 	// A map storing all volumes with ongoing operations so that additional operations
 	// for that same volume (as defined by VolumeID) return an Aborted error
 	VolumeLocks *util.VolumeLocks
-	// readAffinityMapOptions contains map options to enable read affinity.
-	readAffinityMapOptions string
 }
 
 // stageTransaction struct represents the state a transaction was when it either completed
@@ -258,11 +256,10 @@ func (ns *NodeServer) populateRbdVol(
 		rv.Mounter = rbdNbdMounter
 	}
 
-	err = getMapOptions(req, rv)
+	err = ns.getMapOptions(req, rv)
 	if err != nil {
 		return nil, err
 	}
-	ns.appendReadAffinityMapOptions(rv)
 
 	rv.VolID = volID
 
@@ -280,14 +277,14 @@ func (ns *NodeServer) populateRbdVol(
 
 // appendReadAffinityMapOptions appends readAffinityMapOptions to mapOptions
 // if mounter is rbdDefaultMounter and readAffinityMapOptions is not empty.
-func (ns NodeServer) appendReadAffinityMapOptions(rv *rbdVolume) {
+func (rv *rbdVolume) appendReadAffinityMapOptions(readAffinityMapOptions string) {
 	switch {
-	case ns.readAffinityMapOptions == "" || rv.Mounter != rbdDefaultMounter:
+	case readAffinityMapOptions == "" || rv.Mounter != rbdDefaultMounter:
 		return
 	case rv.MapOptions != "":
-		rv.MapOptions += "," + ns.readAffinityMapOptions
+		rv.MapOptions += "," + readAffinityMapOptions
 	default:
-		rv.MapOptions = ns.readAffinityMapOptions
+		rv.MapOptions = readAffinityMapOptions
 	}
 }
 
@@ -1234,23 +1231,6 @@ func (ns *NodeServer) processEncryptedDevice(
 	}
 
 	switch {
-	case encrypted == rbdImageRequiresEncryption:
-		// If we get here, it means the image was created with a
-		// ceph-csi version that creates a passphrase for the encrypted
-		// device in NodeStage. New versions moved that to
-		// CreateVolume.
-		// Use the same setupEncryption() as CreateVolume does, and
-		// continue with the common process to crypt-format the device.
-		err = volOptions.setupBlockEncryption(ctx)
-		if err != nil {
-			log.ErrorLog(ctx, "failed to setup encryption for rbd"+
-				"image %s: %v", imageSpec, err)
-
-			return "", err
-		}
-
-		// make sure we continue with the encrypting of the device
-		fallthrough
 	case encrypted == rbdImageEncryptionPrepared:
 		diskMounter := &mount.SafeFormatAndMount{Interface: ns.Mounter, Exec: utilexec.New()}
 		// TODO: update this when adding support for static (pre-provisioned) PVs
@@ -1394,23 +1374,4 @@ func getDeviceSize(ctx context.Context, devicePath string) (uint64, error) {
 	}
 
 	return size, nil
-}
-
-func (ns *NodeServer) SetReadAffinityMapOptions(crushLocationMap map[string]string) {
-	if len(crushLocationMap) == 0 {
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString("read_from_replica=localize,crush_location=")
-	first := true
-	for key, val := range crushLocationMap {
-		if first {
-			b.WriteString(fmt.Sprintf("%s:%s", key, val))
-			first = false
-		} else {
-			b.WriteString(fmt.Sprintf("|%s:%s", key, val))
-		}
-	}
-	ns.readAffinityMapOptions = b.String()
 }
